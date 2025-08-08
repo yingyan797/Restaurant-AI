@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Booking System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
+        input, select, textarea, button { margin: 5px 0; padding: 8px; width: 100%; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 3px; }
+        .error { background: #f8d7da; color: #721c24; }
+        .success { background: #d4edda; color: #155724; }
+    </style>
+</head>
+<body>
+    <h1>Restaurant Booking System</h1>
+    
+    <div class="section">
+        <h2>Check Availability</h2>
+        <input type="date" id="visitDate" required>
+        <input type="number" id="partySize" placeholder="Party Size" min="1" max="20" required>
+        <button onclick="checkAvailability()">Check Availability</button>
+        <div id="availabilityResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="section">
+        <h2>Make Booking</h2>
+        <input type="date" id="bookingDate" required>
+        <input type="time" id="bookingTime" required>
+        <input type="number" id="bookingPartySize" placeholder="Party Size" min="1" max="20" required>
+        <input type="text" id="firstName" placeholder="First Name">
+        <input type="text" id="surname" placeholder="Surname">
+        <input type="email" id="email" placeholder="Email">
+        <input type="tel" id="mobile" placeholder="Mobile">
+        <textarea id="specialRequests" placeholder="Special Requests"></textarea>
+        <button onclick="makeBooking()">Make Booking</button>
+        <div id="bookingResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="section">
+        <h2>Manage Booking</h2>
+        <input type="text" id="bookingRef" placeholder="Booking Reference">
+        <button onclick="getBooking()">Get Booking</button>
+        <button onclick="cancelBooking()">Cancel Booking</button>
+        <div id="manageResult" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/ConsumerApi/v1/Restaurant/TheHungryUnicorn';
+        const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6ImFwcGVsbGErYXBpQHJlc2RpYXJ5LmNvbSIsIm5iZiI6MTc1NDQzMDgwNSwiZXhwIjoxNzU0NTE3MjA1LCJpYXQiOjE3NTQ0MzA4MDUsImlzcyI6IlNlbGYiLCJhdWQiOiJodHRwczovL2FwaS5yZXNkaWFyeS5jb20ifQ.g3yLsufdk8Fn2094SB3J3XW-KdBc0DY9a2Jiu_56ud8';
+
+        async function checkAvailability() {
+            const date = document.getElementById('visitDate').value;
+            const partySize = document.getElementById('partySize').value;
+            
+            if (!date || !partySize) {
+                showResult('availabilityResult', 'Please fill in all fields', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('VisitDate', date);
+            formData.append('PartySize', partySize);
+            formData.append('ChannelCode', 'ONLINE');
+
+            try {
+                const response = await fetch(`${API_BASE}/AvailabilitySearch`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    const slots = data.available_slots.filter(slot => slot.available);
+                    const html = slots.length ? 
+                        `Available times: ${slots.map(s => s.time).join(', ')}` :
+                        'No availability for this date';
+                    showResult('availabilityResult', html, 'success');
+                } else {
+                    showResult('availabilityResult', data.detail, 'error');
+                }
+            } catch (error) {
+                showResult('availabilityResult', 'Error checking availability', 'error');
+            }
+        }
+
+        async function makeBooking() {
+            const formData = new FormData();
+            formData.append('VisitDate', document.getElementById('bookingDate').value);
+            formData.append('VisitTime', document.getElementById('bookingTime').value);
+            formData.append('PartySize', document.getElementById('bookingPartySize').value);
+            formData.append('ChannelCode', 'ONLINE');
+            formData.append('Customer[FirstName]', document.getElementById('firstName').value);
+            formData.append('Customer[Surname]', document.getElementById('surname').value);
+            formData.append('Customer[Email]', document.getElementById('email').value);
+            formData.append('Customer[Mobile]', document.getElementById('mobile').value);
+            formData.append('SpecialRequests', document.getElementById('specialRequests').value);
+
+            try {
+                const response = await fetch(`${API_BASE}/BookingWithStripeToken`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    showResult('bookingResult', `Booking confirmed! Reference: ${data.booking_reference}`, 'success');
+                } else {
+                    showResult('bookingResult', data.detail, 'error');
+                }
+            } catch (error) {
+                showResult('bookingResult', 'Error making booking', 'error');
+            }
+        }
+
+        async function getBooking() {
+            const ref = document.getElementById('bookingRef').value;
+            if (!ref) {
+                showResult('manageResult', 'Please enter booking reference', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/Booking/${ref}`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    const html = `
+                        <strong>Booking ${data.booking_reference}</strong><br>
+                        Date: ${data.visit_date} at ${data.visit_time}<br>
+                        Party Size: ${data.party_size}<br>
+                        Status: ${data.status}<br>
+                        Customer: ${data.customer.first_name} ${data.customer.surname}
+                    `;
+                    showResult('manageResult', html, 'success');
+                } else {
+                    showResult('manageResult', data.detail, 'error');
+                }
+            } catch (error) {
+                showResult('manageResult', 'Error retrieving booking', 'error');
+            }
+        }
+
+        async function cancelBooking() {
+            const ref = document.getElementById('bookingRef').value;
+            if (!ref) {
+                showResult('manageResult', 'Please enter booking reference', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('micrositeName', 'TheHungryUnicorn');
+            formData.append('bookingReference', ref);
+            formData.append('cancellationReasonId', '1');
+
+            try {
+                const response = await fetch(`${API_BASE}/Booking/${ref}/Cancel`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    showResult('manageResult', `Booking ${ref} cancelled successfully`, 'success');
+                } else {
+                    showResult('manageResult', data.detail, 'error');
+                }
+            } catch (error) {
+                showResult('manageResult', 'Error cancelling booking', 'error');
+            }
+        }
+
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
