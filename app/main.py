@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.routers import availability, booking
+from app import ai_agents
 from app.database import engine
 from app.models import Base
 import app.init_db as init_db
@@ -34,6 +35,7 @@ app = FastAPI(
 # Include API routers
 app.include_router(availability.router)
 app.include_router(booking.router)
+app.include_router(ai_agents.router)
 
 # Serve static files (HTML, JS, CSS)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

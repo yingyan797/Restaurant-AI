@@ -4,53 +4,115 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Restaurant Booking System</title>
+    <link rel="icon" type="image/png" href="icon.png"/>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
+        h3 {background-color: skyblue; padding: 3px; border-radius: 2px; border: skyblue solid;}
+        h3:hover {border: dashed; cursor: pointer; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; height: 100vh; }
+        .container { display: flex; height: 100vh; }
+        .chat-panel { width: 50%; padding: 20px; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+        .booking-panel { width: 50%; padding: 20px; overflow-y: auto; }
+        .chat-messages { flex: 1; border: 1px solid #ddd; border-radius: 5px; padding: 10px; overflow-y: auto; margin-bottom: 10px; background: #f9f9f9; }
+        .chat-input { display: flex; gap: 10px; align-items: flex-end; }
+        .chat-input textarea { width: 85%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; resize: none; height: 50px; font-family: Arial, sans-serif; }
+        .chat-input button { width: 80px; height: 50px; background: #333; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .chat-input button:hover { background: 007bff; }
+        .message { padding: 8px; border-radius: 5px; margin-bottom: 5px;}
+        .user-message { background: green; color: white; text-align: right; max-width: 85%; margin-right: 2px; margin-left: auto;}
+        .bot-message { background: #e9ecef; color: #333; max-width: 85%; margin-left: 2px; margin-right: auto;}
+        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; display: none; background-color: lightcyan;}
         input, select, textarea, button { margin: 5px 0; padding: 8px; width: 100%; box-sizing: border-box; }
-        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        button { background: #333; color: white; border: none; cursor: pointer; }
         button:hover { background: #0056b3; }
         .result { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 3px; }
         .error { background: #f8d7da; color: #721c24; }
         .success { background: #d4edda; color: #155724; }
+        .email-gate { position: absolute; top: 0; left: 0; width: 50%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .email-form { background: white; padding: 30px; border-radius: 10px; text-align: center; max-width: 400px; }
+        .email-form input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }
+        .email-form button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .email-form button:hover { background: #0056b3; }
+        .email-display {font-size: small; color: green; margin-left: 10px;}
+        .email-display:hover {cursor: pointer; border-bottom: solid;}
+        .hidden { display: none; }
     </style>
 </head>
 <body>
-    <h1>Restaurant Booking System</h1>
-    
-    <div class="section">
-        <h2>Check Availability</h2>
-        <input type="date" id="visitDate" required>
-        <input type="number" id="partySize" placeholder="Party Size" min="1" max="20" required>
-        <button onclick="checkAvailability()">Check Availability</button>
-        <div id="availabilityResult" class="result" style="display:none;"></div>
+    <div id="emailGate" class="email-gate">
+        <div class="email-form">
+            <h2>Welcome to Restaurant Booking</h2>
+            <p>Please provide a valid email address to begin using the chatbot:</p>
+            <input type="email" id="userEmail" value=yingyan797@restaurantai.com required>
+            <button onclick="validateEmail()">Continue</button>
+            <div id="emailError" style="color: red; margin-top: 10px; display: none;"></div>
+        </div>
     </div>
+    <div class="container" id="mainContainer">
+        <div class="chat-panel">
+            <h2>Restaurant Booking Assistant <span id="email" class="email-display" title="Click to change" onclick="changeEmail()"></span></h2>
+            <div class="chat-messages" id="chatMessages" style="background-image: url('car.png');">
+                <div class="message bot-message">Hello! I'm your restaurant booking assistant. I can help you check availability, make bookings, or manage existing reservations. What would you like to do?</div>
+            </div>
+            <div class="chat-input">
+                <textarea class="message" id="chatInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)"></textarea>
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+        
+        <div class="booking-panel" style="background-image: url('archer3.jpg');">            
+            <h3 onclick="showSection('avail')">Check Availability</h3>
+            <div class="section" id="avail">
+                <input type="date" id="visitDate" required>
+                <input type="number" id="partySize" placeholder="Party Size" min="1" max="20" required>
+                <button onclick="checkAvailability()">Check Availability</button>
+                <div id="availabilityResult" class="result" style="display:none;"></div>
+            </div>
 
-    <div class="section">
-        <h2>Make Booking</h2>
-        <input type="date" id="bookingDate" required>
-        <input type="time" id="bookingTime" required>
-        <input type="number" id="bookingPartySize" placeholder="Party Size" min="1" max="20" required>
-        <input type="text" id="firstName" placeholder="First Name">
-        <input type="text" id="surname" placeholder="Surname">
-        <input type="email" id="email" placeholder="Email">
-        <input type="tel" id="mobile" placeholder="Mobile">
-        <textarea id="specialRequests" placeholder="Special Requests"></textarea>
-        <button onclick="makeBooking()">Make Booking</button>
-        <div id="bookingResult" class="result" style="display:none;"></div>
-    </div>
+            <h3 onclick="showSection('book')">Make Booking</h3>
+            <div class="section" id="book">
+                <input type="date" id="bookingDate" required>
+                <input type="time" id="bookingTime" required>
+                <input type="number" id="bookingPartySize" placeholder="Party Size" min="1" max="20" required>
+                <input type="text" id="firstName" placeholder="First Name">
+                <input type="text" id="surname" placeholder="Surname">
+                <input type="email" id="email" placeholder="Email">
+                <input type="tel" id="mobile" placeholder="Mobile">
+                <textarea id="specialRequests" placeholder="Special Requests"></textarea>
+                <button onclick="makeBooking()">Make Booking</button>
+                <div id="bookingResult" class="result" style="display:none;"></div>
+            </div>
 
-    <div class="section">
-        <h2>Manage Booking</h2>
-        <input type="text" id="bookingRef" placeholder="Booking Reference">
-        <button onclick="getBooking()">Get Booking</button>
-        <button onclick="cancelBooking()">Cancel Booking</button>
-        <div id="manageResult" class="result" style="display:none;"></div>
+            <h3 onclick="showSection('manage')">Manage Booking</h3>
+            <div class="section" id="manage">
+                <input type="text" id="bookingRef" placeholder="Booking Reference">
+                <button onclick="getBooking()">Check and Update Booking</button>
+                <div id="updateFields" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">
+                    <h4>Update Booking</h4>
+                    <input type="date" id="updateDate" placeholder="New Date">
+                    <input type="time" id="updateTime" placeholder="New Time">
+                    <input type="number" id="updatePartySize" placeholder="New Party Size" min="1" max="20">
+                    <textarea id="updateSpecialRequests" placeholder="New Special Requests"></textarea>
+                    <button onclick="updateBooking()">Update Booking</button>
+                </div>
+                <button onclick="cancelBooking()">Cancel Booking</button>
+                <div id="manageResult" class="result" style="display:none;"></div>
+            </div>
+        </div>
     </div>
 
     <script>
+        function showSection(secId) {
+            const section = document.getElementById(secId);
+            if (section.style.display != "block") {
+                section.style.display = "block";
+            } else {
+                section.style.display = "none";
+            }
+        }
+
         const API_BASE = '/api/ConsumerApi/v1/Restaurant/TheHungryUnicorn';
         const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6ImFwcGVsbGErYXBpQHJlc2RpYXJ5LmNvbSIsIm5iZiI6MTc1NDQzMDgwNSwiZXhwIjoxNzU0NTE3MjA1LCJpYXQiOjE3NTQ0MzA4MDUsImlzcyI6IlNlbGYiLCJhdWQiOiJodHRwczovL2FwaS5yZXNkaWFyeS5jb20ifQ.g3yLsufdk8Fn2094SB3J3XW-KdBc0DY9a2Jiu_56ud8';
+        let userSessionEmail = null;
 
         async function checkAvailability() {
             const date = document.getElementById('visitDate').value;
@@ -140,11 +202,55 @@
                         Customer: ${data.customer.first_name} ${data.customer.surname}
                     `;
                     showResult('manageResult', html, 'success');
+                    
+                    // Show update fields and populate with current values
+                    document.getElementById('updateFields').style.display = 'block';
+                    document.getElementById('updateDate').value = data.visit_date;
+                    document.getElementById('updateTime').value = data.visit_time;
+                    document.getElementById('updatePartySize').value = data.party_size;
+                    document.getElementById('updateSpecialRequests').value = data.special_requests || '';
                 } else {
                     showResult('manageResult', data.detail, 'error');
                 }
             } catch (error) {
                 showResult('manageResult', 'Error retrieving booking', 'error');
+            }
+        }
+
+        async function updateBooking() {
+            const ref = document.getElementById('bookingRef').value;
+            if (!ref) {
+                showResult('manageResult', 'Please get booking first', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            const newDate = document.getElementById('updateDate').value;
+            const newTime = document.getElementById('updateTime').value;
+            const newPartySize = document.getElementById('updatePartySize').value;
+            const newSpecialRequests = document.getElementById('updateSpecialRequests').value;
+
+            if (newDate) formData.append('VisitDate', newDate);
+            if (newTime) formData.append('VisitTime', newTime);
+            if (newPartySize) formData.append('PartySize', newPartySize);
+            if (newSpecialRequests) formData.append('SpecialRequests', newSpecialRequests);
+
+            try {
+                const response = await fetch(`${API_BASE}/Booking/${ref}`, {
+                    method: 'PATCH',
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    showResult('manageResult', `Booking ${ref} updated successfully`, 'success');
+                    document.getElementById('updateFields').style.display = 'none';
+                } else {
+                    showResult('manageResult', data.detail, 'error');
+                }
+            } catch (error) {
+                showResult('manageResult', 'Error updating booking', 'error');
             }
         }
 
@@ -183,6 +289,89 @@
             element.innerHTML = message;
             element.className = `result ${type}`;
             element.style.display = 'block';
+        }
+
+        // Email validation
+        function validateEmail() {
+            const email = document.getElementById('userEmail').value;
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            
+            if (!email) {
+                showEmailError('Please enter an email address');
+                return;
+            }
+            
+            if (!emailRegex.test(email)) {
+                showEmailError('Please enter a valid email address');
+                return;
+            }
+            
+            userSessionEmail = email;
+            sessionStorage.setItem('userEmail', email);
+            document.getElementById('email').innerText = "Login as: "+ email;
+            document.getElementById('emailGate').style.display = 'none';
+        }
+
+        function changeEmail() {
+            document.getElementById('userEmail').value = userSessionEmail;
+            document.getElementById('email').innerText = "";
+            document.getElementById('emailGate').style.display = 'flex';
+        }
+        
+        function showEmailError(message) {
+            const errorDiv = document.getElementById('emailError');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // Chat functionality
+        function addMessage(message, isUser = false) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            messageDiv.textContent = message;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage(message, true);
+            input.value = '';
+
+            // Simple chatbot logic
+            const response = await processMessage(message);
+            addMessage(response);
+        }
+
+        async function processMessage(message) {
+            try {
+                const response = await fetch('/api/ai/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.response;
+                } else {
+                    return 'Sorry, I\'m having trouble processing your request. Please try again.';
+                }
+            } catch (error) {
+                return 'Sorry, I\'m currently unavailable. Please try again later.';
+            }
         }
     </script>
 </body>
