@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Restaurant Booking System</title>
-    <link rel="icon" type="image/png" href="icon.png"/>
+    <link rel="icon" type="image/png" href="static/icon.png"/>
     <style>
         h3 {background-color: skyblue; padding: 3px; border-radius: 2px; border: skyblue solid;}
         h3:hover {border: dashed; cursor: pointer; }
@@ -21,12 +21,13 @@
         .user-message { background: green; color: white; text-align: right; max-width: 85%; margin-right: 2px; margin-left: auto;}
         .bot-message { background: #e9ecef; color: #333; max-width: 85%; margin-left: 2px; margin-right: auto;}
         .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; display: none; background-color: lightcyan;}
-        input, select, textarea, button { margin: 5px 0; padding: 8px; width: 100%; box-sizing: border-box; }
+        input, select, textarea, button { margin: 5px 0; padding: 8px; box-sizing: border-box; }
         button { background: #333; color: white; border: none; cursor: pointer; }
         button:hover { background: #0056b3; }
         .result { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 3px; }
         .error { background: #f8d7da; color: #721c24; }
         .success { background: #d4edda; color: #155724; }
+        .cancelled { background-color: lightgoldenrodyellow; }
         .email-gate { position: absolute; top: 0; left: 0; width: 50%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; }
         .email-form { background: white; padding: 30px; border-radius: 10px; text-align: center; max-width: 400px; }
         .email-form input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }
@@ -49,8 +50,8 @@
     </div>
     <div class="container" id="mainContainer">
         <div class="chat-panel">
-            <h2>Restaurant Booking Assistant <span id="email" class="email-display" title="Click to change" onclick="changeEmail()"></span></h2>
-            <div class="chat-messages" id="chatMessages" style="background-image: url('car.png');">
+            <h2>Restaurant Booking Assistant <span id="login" class="email-display" title="Click to change" onclick="changeEmail()"></span></h2>
+            <div class="chat-messages" id="chatMessages">
                 <div class="message bot-message">Hello! I'm your restaurant booking assistant. I can help you check availability, make bookings, or manage existing reservations. What would you like to do?</div>
             </div>
             <div class="chat-input">
@@ -59,43 +60,50 @@
             </div>
         </div>
         
-        <div class="booking-panel" style="background-image: url('archer3.jpg');">            
+        <div class="booking-panel" style="background-image: url('static/archer3.jpg');">            
             <h3 onclick="showSection('avail')">Check Availability</h3>
             <div class="section" id="avail">
-                <input type="date" id="visitDate" required>
-                <input type="number" id="partySize" placeholder="Party Size" min="1" max="20" required>
+                Restaurant name: <input type="text" id="availName" value="TheHungryUnicorn" required> <br>
+                Visit date: <input type="date" id="visitDate" required> Party size:
+                <input type="number" id="partySize" placeholder="1-20" min="1" max="20" required>
                 <button onclick="checkAvailability()">Check Availability</button>
                 <div id="availabilityResult" class="result" style="display:none;"></div>
             </div>
 
             <h3 onclick="showSection('book')">Make Booking</h3>
             <div class="section" id="book">
-                <input type="date" id="bookingDate" required>
+                Restaurant name: <input type="text" id="bookingName" value="TheHungryUnicorn" required> <br>
+                Date and Time: <input type="date" id="bookingDate" required>
                 <input type="time" id="bookingTime" required>
-                <input type="number" id="bookingPartySize" placeholder="Party Size" min="1" max="20" required>
+                Party size:
+                <input type="number" id="bookingPartySize" placeholder="1-20" min="1" max="20" required> <br>
+                Customer name:
                 <input type="text" id="firstName" placeholder="First Name">
-                <input type="text" id="surname" placeholder="Surname">
-                <input type="email" id="email" placeholder="Email">
-                <input type="tel" id="mobile" placeholder="Mobile">
-                <textarea id="specialRequests" placeholder="Special Requests"></textarea>
+                <input type="text" id="surname" placeholder="Surname"> <br>
+                Contact:
+                <input type="email" id="email" placeholder="Email" style="width: 45%;">
+                <input type="tel" id="mobile" placeholder="Mobile"> <br>
+                Special requests:
+                <textarea id="specialRequests" placeholder="Special Requests" rows="2" style="width: 95%;"></textarea>
                 <button onclick="makeBooking()">Make Booking</button>
                 <div id="bookingResult" class="result" style="display:none;"></div>
             </div>
 
             <h3 onclick="showSection('manage')">Manage Booking</h3>
             <div class="section" id="manage">
-                <input type="text" id="bookingRef" placeholder="Booking Reference">
-                <button onclick="getBooking()">Check and Update Booking</button>
-                <div id="updateFields" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">
-                    <h4>Update Booking</h4>
-                    <input type="date" id="updateDate" placeholder="New Date">
-                    <input type="time" id="updateTime" placeholder="New Time">
-                    <input type="number" id="updatePartySize" placeholder="New Party Size" min="1" max="20">
-                    <textarea id="updateSpecialRequests" placeholder="New Special Requests"></textarea>
-                    <button onclick="updateBooking()">Update Booking</button>
-                </div>
-                <button onclick="cancelBooking()">Cancel Booking</button>
+                Restaurant name: <input type="text" id="manageName" value="TheHungryUnicorn">
+                <input type="text" id="bookingRef" placeholder="Booking Reference" style="width: 95%;">
+                <button onclick="getBooking()">Check / Update Booking</button>
+                <button onclick="cancelBooking()" style="color: salmon;">Cancel Booking</button>
                 <div id="manageResult" class="result" style="display:none;"></div>
+                <div id="updateFields" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; background-color: white;">
+                    New date and time: <input type="date" id="updateDate" placeholder="New Date">
+                    <input type="time" id="updateTime" placeholder="New Time"> Party size: 
+                    <input type="number" id="updatePartySize" placeholder="New Party Size" min="1" max="20"> <br>
+                    Updated special requests:
+                    <textarea id="updateSpecialRequests" placeholder="New Special Requests" style="width: 95%;"></textarea>
+                    <button onclick="updateBooking()">Update booking information</button>
+                </div>
             </div>
         </div>
     </div>
@@ -110,11 +118,12 @@
             }
         }
 
-        const API_BASE = '/api/ConsumerApi/v1/Restaurant/TheHungryUnicorn';
+        const API_BASE = '/api/ConsumerApi/v1/Restaurant';
         const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6ImFwcGVsbGErYXBpQHJlc2RpYXJ5LmNvbSIsIm5iZiI6MTc1NDQzMDgwNSwiZXhwIjoxNzU0NTE3MjA1LCJpYXQiOjE3NTQ0MzA4MDUsImlzcyI6IlNlbGYiLCJhdWQiOiJodHRwczovL2FwaS5yZXNkaWFyeS5jb20ifQ.g3yLsufdk8Fn2094SB3J3XW-KdBc0DY9a2Jiu_56ud8';
         let userSessionEmail = null;
 
         async function checkAvailability() {
+            const name = document.getElementById('availName').value;
             const date = document.getElementById('visitDate').value;
             const partySize = document.getElementById('partySize').value;
             
@@ -129,7 +138,7 @@
             formData.append('ChannelCode', 'ONLINE');
 
             try {
-                const response = await fetch(`${API_BASE}/AvailabilitySearch`, {
+                const response = await fetch(`${API_BASE}/${name}/AvailabilitySearch`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: formData
@@ -151,6 +160,7 @@
         }
 
         async function makeBooking() {
+            const name = document.getElementById('bookingName').value;
             const formData = new FormData();
             formData.append('VisitDate', document.getElementById('bookingDate').value);
             formData.append('VisitTime', document.getElementById('bookingTime').value);
@@ -163,7 +173,7 @@
             formData.append('SpecialRequests', document.getElementById('specialRequests').value);
 
             try {
-                const response = await fetch(`${API_BASE}/BookingWithStripeToken`, {
+                const response = await fetch(`${API_BASE}/${name}/BookingWithStripeToken`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: formData
@@ -181,6 +191,7 @@
         }
 
         async function getBooking() {
+            const name = document.getElementById('manageName').value;
             const ref = document.getElementById('bookingRef').value;
             if (!ref) {
                 showResult('manageResult', 'Please enter booking reference', 'error');
@@ -188,7 +199,7 @@
             }
 
             try {
-                const response = await fetch(`${API_BASE}/Booking/${ref}`, {
+                const response = await fetch(`${API_BASE}/${name}/Booking/${ref}`, {
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
                 });
                 
@@ -201,7 +212,7 @@
                         Status: ${data.status}<br>
                         Customer: ${data.customer.first_name} ${data.customer.surname}
                     `;
-                    showResult('manageResult', html, 'success');
+                    showResult('manageResult', html, data.status == "confirmed" ? 'success': 'cancelled');
                     
                     // Show update fields and populate with current values
                     document.getElementById('updateFields').style.display = 'block';
@@ -218,6 +229,7 @@
         }
 
         async function updateBooking() {
+            const name = document.getElementById('manageName').value;
             const ref = document.getElementById('bookingRef').value;
             if (!ref) {
                 showResult('manageResult', 'Please get booking first', 'error');
@@ -236,7 +248,7 @@
             if (newSpecialRequests) formData.append('SpecialRequests', newSpecialRequests);
 
             try {
-                const response = await fetch(`${API_BASE}/Booking/${ref}`, {
+                const response = await fetch(`${API_BASE}/${name}/Booking/${ref}`, {
                     method: 'PATCH',
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: formData
@@ -255,6 +267,7 @@
         }
 
         async function cancelBooking() {
+            const name = document.getElementById('manageName').value;
             const ref = document.getElementById('bookingRef').value;
             if (!ref) {
                 showResult('manageResult', 'Please enter booking reference', 'error');
@@ -267,7 +280,7 @@
             formData.append('cancellationReasonId', '1');
 
             try {
-                const response = await fetch(`${API_BASE}/Booking/${ref}/Cancel`, {
+                const response = await fetch(`${API_BASE}/${name}/Booking/${ref}/Cancel`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: formData
@@ -275,7 +288,7 @@
                 
                 const data = await response.json();
                 if (response.ok) {
-                    showResult('manageResult', `Booking ${ref} cancelled successfully`, 'success');
+                    showResult('manageResult', `Booking ${ref} cancelled successfully`, 'cancelled');
                 } else {
                     showResult('manageResult', data.detail, 'error');
                 }
@@ -308,13 +321,13 @@
             
             userSessionEmail = email;
             sessionStorage.setItem('userEmail', email);
-            document.getElementById('email').innerText = "Login as: "+ email;
+            document.getElementById('login').innerText = "Login as: "+ email;
             document.getElementById('emailGate').style.display = 'none';
         }
 
         function changeEmail() {
             document.getElementById('userEmail').value = userSessionEmail;
-            document.getElementById('email').innerText = "";
+            document.getElementById('login').innerText = "";
             document.getElementById('emailGate').style.display = 'flex';
         }
         
