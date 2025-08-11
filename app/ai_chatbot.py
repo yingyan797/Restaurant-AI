@@ -1,15 +1,15 @@
 from datetime import date, time, datetime
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Type
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError # Import ValidationError
 from sqlalchemy.orm import Session
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 from app.database import get_db, Base, engine
 from app.models import Restaurant, Customer, Booking, AvailabilitySlot, CancellationReason
-from ai_tools import AIToolCallingInterface, logger
+from ai_tools import AIToolCallingInterface, logger, QueryCondition, FilterCondition # Import QueryCondition and FilterCondition dataclasses
 
 # --- LangGraph State Definition ---
 # This defines the schema of information that will be passed between nodes in the graph.
@@ -53,6 +53,12 @@ class AgentState(TypedDict):
     customer_restaurant_email_marketing_opt_in_text: Optional[str]
     customer_restaurant_sms_marketing_opt_in_text: Optional[str]
 
+    # New fields for complex queries
+    query_condition: Optional[Any] # Will store QueryConditionModel, then converted to QueryCondition dataclass
+    booking_conditions: Optional[Any] # Will store QueryConditionModel, then converted to QueryCondition dataclass
+    restaurant_conditions: Optional[Any] # Will store QueryConditionModel, then converted to QueryCondition dataclass
+
+
 # --- Pydantic Models for Tool Definitions (for Gemini) ---
 # These models describe the structure of the inputs for each tool, which Gemini uses
 # to understand how to call them.
@@ -75,6 +81,20 @@ class TimeStr(str):
         try: time.fromisoformat(v); return v
         except ValueError: raise ValueError("Time must be in HH:MM:SS format")
 
+# New Pydantic Models for Query Conditions
+class FilterConditionModel(BaseModel):
+    """Represents a single filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    operator: str = Field(description="The comparison operator (e.g., 'eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'in', 'not_in', 'like', 'ilike', 'is_null', 'is_not_null', 'between').")
+    value: Optional[Any] = Field(None, description="The value(s) for the filter. For 'in'/'not_in' this should be a list. For 'between' this should be a list/tuple of two values. For 'is_null'/'is_not_null' this should be None.")
+
+class QueryConditionModel(BaseModel):
+    """Constraints and displayed information for database queries."""
+    filters: Optional[List[FilterConditionModel]] = Field(None, description="A list of filter conditions to apply.")
+    limit: Optional[int] = Field(None, description="Maximum number of records to return.")
+    offset: Optional[int] = Field(None, description="Number of records to skip.")
+    order_by: Optional[List[str]] = Field(None, description="List of column names to order the results by.")
+
 class SearchAvailabilityTool(BaseModel):
     """Search for available booking slots at a restaurant for a specific date and party size."""
     restaurant_name: str = Field(description="The name of the restaurant (e.g., 'The Fancy Fork').")
@@ -86,7 +106,7 @@ class CreateBookingTool(BaseModel):
     """Create a new restaurant booking for a customer."""
     restaurant_name: str = Field(description="The name of the restaurant.")
     VisitDate: DateStr = Field(description="The desired visit date in YYYY-MM-DD format.")
-    VisitTime: TimeStr = Field(description="The desired visit time in HH:MM:SS format (e.g., '19:00:00').")
+    VisitTime: TimeStr = Field(description="The desired visit time in HH:MM:SS format.")
     PartySize: int = Field(description="Number of people in the party.")
     customer_email: str = Field(description="Customer's email address.")
     customer_first_name: str = Field(description="Customer's first name.")
@@ -132,47 +152,178 @@ class UpdateBookingDetailsTool(BaseModel):
     IsLeaveTimeConfirmed: Optional[bool] = Field(None, description="New status for leave time confirmation (boolean).")
 
 class GetCustomerBookingsAndRestaurantsSummaryTool(BaseModel):
-    """Get a summary of a customer's bookings and the associated restaurant information."""
+    """Get a summary of a customer's bookings and the associated restaurant information, with optional filtering."""
     email: str = Field(description="The customer's email address.")
+    booking_conditions: Optional[QueryConditionModel] = Field(None, description="Optional: Conditions to filter the customer's bookings.")
+    restaurant_conditions: Optional[QueryConditionModel] = Field(None, description="Optional: Conditions to filter the booked restaurants.")
 
 class ListCancellationReasonsTool(BaseModel):
     """Get all possible cancellation reasons with their IDs, titles, and descriptions."""
 
 class GetRestaurantsTool(BaseModel):
-    """Get information of all restaurants or a specific restaurant by name."""
-    name: Optional[str] = Field(None, description="Optional: The name of the specific restaurant to search for. If omitted, lists all restaurants.")
+    """Get information of all restaurants or specific restaurants satisfying certain conditions."""
+    query_condition: Optional[QueryConditionModel] = Field(None, description="Optional: Conditions to filter the restaurants.")
+
+# Filter creation tools for advanced customer booking searches
+class CreateEqualsFilterTool(BaseModel):
+    """Create an equals filter condition for database queries."""
+    column: str = Field(description="The column name to filter on (e.g., 'party_size', 'status', 'visit_date').")
+    value: Any = Field(description="The value to match exactly.") # Changed to Any to allow diverse types
+
+class CreateInFilterTool(BaseModel):
+    """Create an IN filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    values: List[Any] = Field(description="List of values to match against.") # Changed to List[Any]
+
+class CreateRangeFilterTool(BaseModel):
+    """Create a range filter condition for database queries."""
+    column: str = Field(description="The column name to filter on (e.g., 'party_size', 'visit_date').")
+    lower: Any = Field(description="The lower bound of the range.") # Changed to Any
+    upper: Any = Field(description="The upper bound of the range.") # Changed to Any
+
+class CreateLikeFilterTool(BaseModel):
+    """Create a LIKE filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    pattern: str = Field(description="The pattern to match (use % for wildcards).")
+    case_sensitive: bool = Field(default=True, description="Whether the search should be case sensitive.")
+
+class CreateNotEqualsFilterTool(BaseModel):
+    """Create a not equals filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    value: Any = Field(description="The value to exclude.") # Changed to Any
+
+class CreateLessThanFilterTool(BaseModel):
+    """Create a less than filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    value: Any = Field(description="The value to compare against.") # Changed to Any
+
+class CreateLessThanOrEqualFilterTool(BaseModel):
+    """Create a less than or equal filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    value: Any = Field(description="The value to compare against.") # Changed to Any
+
+class CreateGreaterThanFilterTool(BaseModel):
+    """Create a greater than filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    value: Any = Field(description="The value to compare against.") # Changed to Any
+
+class CreateGreaterThanOrEqualFilterTool(BaseModel):
+    """Create a greater than or equal filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    value: Any = Field(description="The value to compare against.") # Changed to Any
+
+class CreateNotInFilterTool(BaseModel):
+    """Create a NOT IN filter condition for database queries."""
+    column: str = Field(description="The column name to filter on.")
+    values: List[Any] = Field(description="List of values to exclude.") # Changed to List[Any]
+
+class CreateIsNullFilterTool(BaseModel):
+    """Create an IS NULL filter condition for database queries."""
+    column: str = Field(description="The column name to check for null values.")
+
+class CreateIsNotNullFilterTool(BaseModel):
+    """Create an IS NOT NULL filter condition for database queries."""
+    column: str = Field(description="The column name to check for non-null values.")
+
+TOOL_NODE_MAP = {
+    "SearchAvailabilityTool": SearchAvailabilityTool, "CreateBookingTool": CreateBookingTool,
+    "CancelBookingTool": CancelBookingTool, "GetBookingDetailsTool": GetBookingDetailsTool,
+    "UpdateBookingDetailsTool": UpdateBookingDetailsTool,
+    "GetCustomerBookingsAndRestaurantsSummaryTool": GetCustomerBookingsAndRestaurantsSummaryTool,
+    "ListCancellationReasonsTool": ListCancellationReasonsTool, "GetRestaurantsTool": GetRestaurantsTool,
+    "CreateEqualsFilterTool": CreateEqualsFilterTool, "CreateInFilterTool": CreateInFilterTool,
+    "CreateRangeFilterTool": CreateRangeFilterTool, "CreateLikeFilterTool": CreateLikeFilterTool,
+    "CreateNotEqualsFilterTool": CreateNotEqualsFilterTool, "CreateLessThanFilterTool": CreateLessThanFilterTool,
+    "CreateLessThanOrEqualFilterTool": CreateLessThanOrEqualFilterTool, "CreateGreaterThanFilterTool": CreateGreaterThanFilterTool,
+    "CreateGreaterThanOrEqualFilterTool": CreateGreaterThanOrEqualFilterTool, "CreateNotInFilterTool": CreateNotInFilterTool,
+    "CreateIsNullFilterTool": CreateIsNullFilterTool, "CreateIsNotNullFilterTool": CreateIsNotNullFilterTool,
+    # Add the new condition models to the map if they were top-level tools, but they are nested here
+    "QueryConditionModel": QueryConditionModel, # Adding for potential direct parsing if needed
+    "FilterConditionModel": FilterConditionModel, # Adding for potential direct parsing if needed
+}
 
 # --- LangGraph Nodes ---
 
 # Initialize a Gemini model with tool calling capabilities
 # Set your GOOGLE_API_KEY environment variable or uncomment the line below to set it directly
 # os.environ["GOOGLE_API_KEY"] = "YOUR_GEMINI_API_KEY"
-model = ChatGoogleGenerativeAI(model="gemini-pro")
+model = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite")
 
 # Bind the defined tools to the Gemini model
 model_with_tools = model.bind_tools([
     SearchAvailabilityTool, CreateBookingTool, CancelBookingTool, GetBookingDetailsTool,
     UpdateBookingDetailsTool, GetCustomerBookingsAndRestaurantsSummaryTool,
-    ListCancellationReasonsTool, GetRestaurantsTool
+    ListCancellationReasonsTool, GetRestaurantsTool,
+    CreateEqualsFilterTool, CreateInFilterTool, CreateRangeFilterTool, CreateLikeFilterTool,
+    CreateNotEqualsFilterTool, CreateLessThanFilterTool, CreateLessThanOrEqualFilterTool,
+    CreateGreaterThanFilterTool, CreateGreaterThanOrEqualFilterTool, CreateNotInFilterTool,
+    CreateIsNullFilterTool, CreateIsNotNullFilterTool
 ])
+
+def _convert_pydantic_to_dataclass(pydantic_model_instance: BaseModel, target_dataclass_type: Type):
+    """
+    Recursively converts a Pydantic model instance to its corresponding dataclass instance.
+    Handles nested Pydantic models (e.g., FilterConditionModel within QueryConditionModel)
+    by converting them to their respective dataclasses.
+    """
+    if pydantic_model_instance is None:
+        return None
+    
+    if not isinstance(pydantic_model_instance, BaseModel):
+        # If it's not a Pydantic model (e.g., already a basic type like str, int, list of str), return as is
+        return pydantic_model_instance
+
+    # Get the dictionary representation of the Pydantic model
+    model_dict = pydantic_model_instance.model_dump()
+
+    # Special handling for QueryConditionModel which has a 'filters' list
+    if target_dataclass_type == QueryCondition and 'filters' in model_dict and model_dict['filters'] is not None:
+        converted_filters = []
+        for filter_model_data in model_dict['filters']:
+            # filter_model_data might be a dict (if not already parsed to Pydantic obj) or FilterConditionModel
+            if isinstance(filter_model_data, dict):
+                # If it's a dict, parse it into FilterConditionModel first
+                filter_model_instance = FilterConditionModel(**filter_model_data)
+            else:
+                filter_model_instance = filter_model_data # Assume it's already a FilterConditionModel
+            converted_filters.append(_convert_pydantic_to_dataclass(filter_model_instance, FilterCondition))
+        model_dict['filters'] = converted_filters
+    
+    # Instantiate the target dataclass
+    try:
+        return target_dataclass_type(**model_dict)
+    except Exception as e:
+        logger.error(f"Error converting Pydantic model {pydantic_model_instance.__class__.__name__} to dataclass {target_dataclass_type.__name__}: {e}")
+        logger.error(f"Model dict: {model_dict}")
+        return None
+
 
 def _map_state_to_tool_params(state: AgentState, tool_model: BaseModel) -> Dict[str, Any]:
     """
     Maps relevant fields from the AgentState to the parameters expected by a given tool's Pydantic model.
     Handles type conversions (e.g., date/time objects to strings) where necessary.
+    Also handles conversion of Pydantic QueryCondition/FilterCondition to ai_tools dataclasses.
     """
     params = {}
     for field_name, field_info in tool_model.model_fields.items():
         state_value = getattr(state, field_name, None)
         
+        if state_value is None:
+            continue
+
         # Convert date/time objects back to string format if the tool expects strings
         if field_name == "VisitDate" and isinstance(state_value, date):
             params[field_name] = state_value.isoformat()
         elif field_name == "VisitTime" and isinstance(state_value, time):
             params[field_name] = state_value.isoformat()
-        elif state_value is not None:
+        elif isinstance(field_info.annotation, type) and issubclass(field_info.annotation, QueryConditionModel):
+            # Convert QueryConditionModel (Pydantic) to QueryCondition (dataclass)
+            params[field_name] = _convert_pydantic_to_dataclass(state_value, QueryCondition)
+        elif isinstance(field_info.annotation, type) and issubclass(field_info.annotation, FilterConditionModel):
+            # This case should ideally not be hit directly for top-level params, but for robustness
+            params[field_name] = _convert_pydantic_to_dataclass(state_value, FilterCondition)
+        else:
             params[field_name] = state_value
-
     return params
 
 def agent_node(state: AgentState) -> AgentState:
@@ -184,6 +335,8 @@ def agent_node(state: AgentState) -> AgentState:
     messages = [SystemMessage("You are a helpful assistant for restaurant bookings. "
                               "You can search for availability, create, cancel, update, and retrieve bookings. "
                               "You can also list restaurants and cancellation reasons. "
+                              "For advanced searches, you can create filters to find specific customer bookings by criteria like party size, date ranges, status, etc. "
+                              "Use filter tools when customers ask to find bookings/restaurants with specific conditions (e.g., 'bookings for more than 4 people', 'bookings this month', 'restaurant names starts with T'). "
                               "Always ask for all necessary information before calling a tool. "
                               "Be polite and informative. "
                               "Current Date: " + date.today().isoformat() + "\n"
@@ -227,25 +380,80 @@ def agent_node(state: AgentState) -> AgentState:
             elif key == "VisitTime" and isinstance(value, str):
                 try: new_state[key] = time.fromisoformat(value)
                 except ValueError: logger.warning(f"Could not parse VisitTime: {value}"); new_state[key] = None
+            elif key in ["query_condition", "booking_conditions", "restaurant_conditions"] and isinstance(value, dict):
+                try:
+                    # Attempt to parse the dictionary into a QueryConditionModel
+                    new_state[key] = QueryConditionModel(**value)
+                except ValidationError as e:
+                    logger.warning(f"Could not parse {key} into QueryConditionModel due to validation error: {e}"); new_state[key] = None
+                except Exception as e:
+                    logger.warning(f"Could not parse {key} into QueryConditionModel: {e}"); new_state[key] = None
             else:
                 new_state[key] = value
 
+        # --- NEW LOGIC: Attempt to auto-resolve booking ref/restaurant from email (or any other data) ---
+        if (new_state['current_intent'] in ["UpdateBookingDetailsTool", "CancelBookingTool", "GetBookingDetailsTool"]) and \
+           not (new_state.get('booking_reference') and new_state.get('restaurant_name')) and \
+           new_state.get('customer_email'):
+            logger.info("Missing booking ref and restaurant, using GetCustomerBookingsAndRestaurantsSummaryTool...")
+            new_state['current_intent'] = "GetCustomerBookingsAndRestaurantsSummaryTool"
+            new_state['missing_info'] = []  # We're calling a tool to *get* the info.
+            # We don't need to clear the email, since it will be used to get the summary.
+
+        # --- NEW LOGIC: Handle potential multiple bookings  ---
+        if new_state.get('current_intent') == "GetCustomerBookingsAndRestaurantsSummaryTool" and \
+           new_state.get('tool_output') and new_state.get('tool_output').get('bookings_summary'):
+
+            bookings = new_state['tool_output']['bookings_summary']
+            logger.info(f"Entering confirm_booking state.")
+            booking_options_str = "\n".join([
+                f"- {i+1}: {b['restaurant_name']} on {b['visit_date']} at {b['visit_time']} (Ref: {b['booking_reference']})"
+                for i, b in enumerate(bookings)
+            ])
+            new_state['response'] = (
+                "I found multiple matching bookings. Please select the booking you want to modify:\n"
+                f"{booking_options_str}\n"
+                "Or, type 'cancel' to cancel."
+            )
+            new_state['current_intent'] = "confirm_booking" # Transition to confirmation state
+            new_state['missing_info'] = ['booking_reference', 'restaurant_name'] # Prompt for booking selection.
+        # --- Check if we have the values after tool call, or if the user confirmed, or if the original tool name is create booking--
+        elif (new_state['current_intent'] == "UpdateBookingDetailsTool" or new_state['current_intent'] == "CancelBookingTool") and \
+                new_state.get('tool_output') and new_state.get('tool_output').get('bookings_summary') and \
+                not new_state.get('booking_reference') and not new_state.get('restaurant_name') and \
+                new_state.get('customer_email') and \
+                len(new_state['tool_output']['bookings_summary']) == 1: # Only if single booking is found
+            logger.info("Found booking ref and restaurant from tool output")
+            bookings = new_state['tool_output']['bookings_summary']
+            restaurants = new_state['tool_output'].get('booked_restaurants', []) # Handle potential missing restaurant info
+            if bookings:
+                # Assuming only one booking will match.  If multiple matches possible, handle the edge case better.
+                new_state['booking_reference'] = bookings[0]['booking_reference']
+                restaurant_id = bookings[0].get("restaurant_id")  # Attempt to get restaurant ID.
+                if restaurant_id:
+                  restaurant = next((r for r in restaurants if r['id'] == restaurant_id), None)
+                else:
+                  restaurant = None
+
+                if restaurant:
+                    new_state['restaurant_name'] = restaurant['name']
+                elif restaurants:
+                    new_state['restaurant_name'] = restaurants[0]['name'] #Fallback to the first restaurant if we didn't find a match.
+                else:
+                    logger.warning("Could not determine restaurant from summary.")
+
+            # Clear missing info since we've filled it in now.
+            new_state['missing_info'] = []
+
         # Check for missing required parameters for the determined tool
-        tool_model_map = {
-            "SearchAvailabilityTool": SearchAvailabilityTool, "CreateBookingTool": CreateBookingTool,
-            "CancelBookingTool": CancelBookingTool, "GetBookingDetailsTool": GetBookingDetailsTool,
-            "UpdateBookingDetailsTool": UpdateBookingDetailsTool,
-            "GetCustomerBookingsAndRestaurantsSummaryTool": GetCustomerBookingsAndRestaurantsSummaryTool,
-            "ListCancellationReasonsTool": ListCancellationReasonsTool, "GetRestaurantsTool": GetRestaurantsTool,
-        }
-        target_tool_model = tool_model_map.get(new_state['current_intent'])
+        target_tool_model = TOOL_NODE_MAP.get(new_state['current_intent'])
 
         if target_tool_model:
             required_fields = target_tool_model.schema().get('required', [])
             for field_name in required_fields:
                 if new_state.get(field_name) is None:
                     new_state['missing_info'].append(field_name)
-            
+
             # Special check for UpdateBookingDetailsTool: needs at least one updatable field
             if new_state['current_intent'] == "UpdateBookingDetailsTool" and not new_state['missing_info']:
                 update_fields = ["VisitDate", "VisitTime", "PartySize", "SpecialRequests", "IsLeaveTimeConfirmed"]
@@ -260,7 +468,7 @@ def agent_node(state: AgentState) -> AgentState:
             new_state['current_intent'] = "ask_for_info"
         else:
             new_state['current_intent'] = "call_tool"
-        
+
         return new_state
     else:
         # If Gemini doesn't suggest a tool call, it's a direct conversational response
@@ -268,6 +476,141 @@ def agent_node(state: AgentState) -> AgentState:
         new_state['current_intent'] = "respond_directly"
         new_state['original_tool_intent'] = None # Clear original intent
         return new_state
+
+
+def confirm_booking_node(state: AgentState) -> AgentState:
+    """
+    Confirms booking details with the user, handles both existing and new bookings.
+    """
+    logger.info("Entering confirm_booking_node...")
+    new_state = state.copy()
+    user_message = state.get('user_message', '').strip().lower()
+    original_intent = state.get('original_tool_intent')
+    booking_summaries = state.get('tool_output', {}).get('bookings_summary', [])  # For existing bookings
+
+    # ---- Handle "Cancel" or "No" ----
+    if "cancel" in user_message or "no" in user_message:
+        new_state['response'] = "Okay, cancelling the booking."
+        new_state['current_intent'] = "respond_directly"  # Exit the flow.
+        return new_state
+
+    # ---- Handle New Booking Confirmation ----
+    if original_intent == "CreateBookingTool":
+        restaurant_name = state.get('restaurant_name')
+        visit_date = state.get('VisitDate')
+        visit_time = state.get('VisitTime')
+        party_size = state.get('PartySize')
+        # customer_email = state.get('customer_email')  # Or retrieve it.
+
+        if not all([restaurant_name, visit_date, visit_time, party_size]):
+            new_state['response'] = "I'm sorry, but I didn't get all the information. Please try again."
+            new_state['current_intent'] = "ask_for_info"  # Go back and ask again
+            new_state['missing_info'] = ["restaurant_name", "VisitDate", "VisitTime", "PartySize"]  # Reset missing info.
+            return new_state
+
+        #  Summarize the details for confirmation.
+        confirmation_message = (
+            f"OK, I'm about to book a table at {restaurant_name} for {party_size} people on {visit_date} at {visit_time}.  "
+            "Is that correct?"
+        )
+        new_state['response'] = confirmation_message
+
+        # If they confirm, transition to 'call_tool'
+        if "yes" in user_message or "correct" in user_message or "ok" in user_message:
+            new_state['current_intent'] = "call_tool"
+        else:
+            # If they say 'no', or don't confirm, let them start over.
+            new_state['response'] = "Okay, let's start again."
+            new_state['current_intent'] = "ask_for_info"
+            new_state['missing_info'] = ['restaurant_name', 'VisitDate', 'VisitTime', 'PartySize']
+            return new_state
+
+    # ---- Handle Existing Booking (Selection) ----
+    elif original_intent in ("UpdateBookingDetailsTool", "CancelBookingTool"): #Or, GetBookingDetailsTool
+        # If in the confirmation state, the user should respond.
+        try:
+          selection_index = int(user_message) - 1
+          if 0 <= selection_index < len(booking_summaries):
+              selected_booking = booking_summaries[selection_index]
+              new_state['booking_reference'] = selected_booking['booking_reference']
+              new_state['restaurant_name'] = selected_booking.get('restaurant_name')
+              new_state['missing_info'] = [] # we now have all the info
+              new_state['current_intent'] = state['original_tool_intent'] # Go to the tool the user originally wanted
+              new_state['response'] = "OK, I've selected that booking."
+              logger.info(f"User selected booking: {selected_booking}")
+          else:
+              new_state['response'] = "Invalid selection. Please choose a number from the list."
+              new_state['current_intent'] = "ask_for_info" #ask again.
+              new_state['missing_info'] = ["booking_reference", "restaurant_name"]
+        except ValueError:
+            new_state['response'] = "Invalid input. Please enter the number of the booking or 'cancel'."
+            new_state['current_intent'] = "ask_for_info" # ask again
+            new_state['missing_info'] = ["booking_reference", "restaurant_name"]
+    else: # Fallback if we get to this state unexpectedly.
+        new_state['response'] = "I didn't understand. Please try again."
+        new_state['current_intent'] = "ask_for_info"  # Go back to the start of the loop
+    return new_state
+
+
+def ask_for_info_node(state: AgentState) -> AgentState:
+    """
+    Generates a clarifying question to the user asking for the missing information.
+    """
+    logger.info("Entering ask_for_info_node...")
+    new_state = state.copy()
+    missing = new_state.get('missing_info', [])
+
+    if not missing:
+        new_state['response'] = "I'm ready to proceed, but it seems I'm not missing any information currently. How can I help?"
+        return new_state
+
+    # Customizable prompts for common missing fields
+    prompts = {
+        "restaurant_name": "the restaurant name", "VisitDate": "the visit date (e.g., YYYY-MM-DD)",
+        "VisitTime": "the visit time (e.g., HH:MM:SS)", "PartySize": "the number of people in your party",
+        "customer_email": "your email address", "customer_first_name": "your first name",
+        "customer_surname": "your surname", "customer_mobile": "your mobile number",
+        "booking_reference": "the booking reference number",
+        "micrositeName": "the microsite name (usually the same as the restaurant name)",
+        "cancellationReasonId": "the cancellation reason ID (you can ask me to list them by saying 'List cancellation reasons')",
+        "at least one of (VisitDate, VisitTime, PartySize, SpecialRequests, IsLeaveTimeConfirmed)": "what you'd like to update (e.g., new date, time, party size, or special requests)",
+        "column": "the column name to filter on (e.g., 'party_size', 'visit_date', 'status')",
+        "value": "the value to filter by", "values": "the list of values to filter by",
+        "lower": "the lower bound for the range", "upper": "the upper bound for the range",
+        "pattern": "the search pattern (use % for wildcards)",
+        # Add prompts for new query condition fields if they somehow become 'missing' directly
+        "query_condition": "the query conditions (e.g., filters, limit, order by)",
+        "booking_conditions": "the booking conditions (e.g., filters, limit, order by)",
+        "restaurant_conditions": "the restaurant conditions (e.g., filters, limit, order by)",
+    }
+    # --- NEW LOGIC FOR CONFIRMATION STATE:  Modify prompts to be more specific ---
+    if new_state.get('current_intent') == "confirm_booking":
+        # If in the confirmation state, the user should respond.
+        if new_state.get('original_tool_intent') == "CreateBookingTool":
+            # No changes necessary, the confirm node handles the prompting.
+            pass # The `confirm_booking` node handles prompting.
+        else:
+            #  Handle the existing bookings selection.
+            new_state['response'] = "Please confirm which booking you want to modify, or say 'cancel'."
+            return new_state
+
+
+    # Format the list of missing items for the user-facing prompt
+    missing_phrases = [
+        prompts.get(item, item.replace('_', ' ').replace('customer ', 'your ').replace('IsLeaveTimeConfirmed', 'whether the leave time is confirmed'))
+        for item in missing
+    ]
+
+    if len(missing_phrases) == 1:
+        new_state['response'] = f"Could you please provide {missing_phrases[0]}?"
+    elif len(missing_phrases) == 2:
+        new_state['response'] = f"Could you please provide {missing_phrases[0]} and {missing_phrases[1]}?"
+    else:
+        last_item = missing_phrases.pop()
+        new_state['response'] = f"Could you please provide {', '.join(missing_phrases)}, and {last_item}?"
+
+    return new_state
+
 
 def tool_node(state: AgentState) -> AgentState:
     """
@@ -285,14 +628,7 @@ def tool_node(state: AgentState) -> AgentState:
         return new_state
 
     tool_func = AIToolCallingInterface.TOOL_FUNCTIONS[tool_name]
-    tool_model_map = {
-        "SearchAvailabilityTool": SearchAvailabilityTool, "CreateBookingTool": CreateBookingTool,
-        "CancelBookingTool": CancelBookingTool, "GetBookingDetailsTool": GetBookingDetailsTool,
-        "UpdateBookingDetailsTool": UpdateBookingDetailsTool,
-        "GetCustomerBookingsAndRestaurantsSummaryTool": GetCustomerBookingsAndRestaurantsSummaryTool,
-        "ListCancellationReasonsTool": ListCancellationReasonsTool, "GetRestaurantsTool": GetRestaurantsTool,
-    }
-    target_tool_model = tool_model_map.get(tool_name)
+    target_tool_model = TOOL_NODE_MAP.get(tool_name)
     if not target_tool_model:
         new_state['response'] = f"Error: Internal system error, no Pydantic model for '{tool_name}'."
         new_state['tool_output'] = {"error": "No tool model"}
@@ -418,58 +754,27 @@ def prepare_response_node(state: AgentState) -> AgentState:
 
     elif current_intent == "GetRestaurantsTool":
         if tool_output and tool_output.get("success") and tool_output.get("data"):
-            if state.get('restaurant_name'): # If a specific restaurant was asked for
-                r = tool_output["data"][0]
-                response_message = (
-                    f"Yes, I found '{r['name']}' located at {r['address']}. "
-                    f"You can reach them at {r['phone_number']}."
-                )
-            else: # If all restaurants were requested
-                restaurants_info = [f"- {r['name']} ({r['address']})" for r in tool_output["data"]]
-                response_message = "Here are the restaurants I know:\n" + "\n".join(restaurants_info)
+            # Check if specific filters were applied to provide a more tailored response
+            query_condition = state.get('query_condition')
+            if query_condition and query_condition.filters:
+                 response_message = "I found the following restaurants matching your criteria:\n"
+            else:
+                 response_message = "Here are the restaurants I know:\n"
+
+            restaurants_info = [f"- {r['name']} ({r['address']})" for r in tool_output["data"]]
+            response_message += "\n".join(restaurants_info)
+
         else: response_message = "No restaurants found matching your criteria."
 
+    # Handle filter creation tools
+    elif current_intent.startswith("Create") and current_intent.endswith("FilterTool"):
+        if tool_output:
+            filter_type = current_intent.replace("Create", "").replace("FilterTool", "").replace("Filter", "")
+            response_message = f"Filter created successfully. You can now use this {filter_type.lower()} filter to search customer bookings with specific criteria."
+        else:
+            response_message = "I was unable to create the filter. Please check your parameters and try again."
+
     new_state['response'] = response_message
-    return new_state
-
-def ask_for_info_node(state: AgentState) -> AgentState:
-    """
-    Generates a clarifying question to the user asking for the missing information.
-    """
-    logger.info("Entering ask_for_info_node...")
-    new_state = state.copy()
-    missing = new_state.get('missing_info', [])
-    
-    if not missing:
-        new_state['response'] = "I'm ready to proceed, but it seems I'm not missing any information currently. How can I help?"
-        return new_state
-
-    # Customizable prompts for common missing fields
-    prompts = {
-        "restaurant_name": "the restaurant name", "VisitDate": "the visit date (e.g., YYYY-MM-DD)",
-        "VisitTime": "the visit time (e.g., HH:MM:SS)", "PartySize": "the number of people in your party",
-        "customer_email": "your email address", "customer_first_name": "your first name",
-        "customer_surname": "your surname", "customer_mobile": "your mobile number",
-        "booking_reference": "the booking reference number",
-        "micrositeName": "the microsite name (usually the same as the restaurant name)",
-        "cancellationReasonId": "the cancellation reason ID (you can ask me to list them by saying 'List cancellation reasons')",
-        "at least one of (VisitDate, VisitTime, PartySize, SpecialRequests, IsLeaveTimeConfirmed)": "what you'd like to update (e.g., new date, time, party size, or special requests)",
-    }
-
-    # Format the list of missing items for the user-facing prompt
-    missing_phrases = [
-        prompts.get(item, item.replace('_', ' ').replace('customer ', 'your ').replace('IsLeaveTimeConfirmed', 'whether the leave time is confirmed'))
-        for item in missing
-    ]
-    
-    if len(missing_phrases) == 1:
-        new_state['response'] = f"Could you please provide {missing_phrases[0]}?"
-    elif len(missing_phrases) == 2:
-        new_state['response'] = f"Could you please provide {missing_phrases[0]} and {missing_phrases[1]}?"
-    else:
-        last_item = missing_phrases.pop()
-        new_state['response'] = f"Could you please provide {', '.join(missing_phrases)}, and {last_item}?"
-
     return new_state
 
 # --- LangGraph Graph Definition ---
@@ -484,6 +789,7 @@ def create_booking_agent_graph():
     workflow.add_node("tool_executor", tool_node)
     workflow.add_node("prepare_response", prepare_response_node)
     workflow.add_node("ask_for_info", ask_for_info_node)
+    workflow.add_node("confirm_booking", confirm_booking_node)
 
     # Set the initial entry point of the graph
     workflow.set_entry_point("agent")
@@ -496,7 +802,8 @@ def create_booking_agent_graph():
             "call_tool": "tool_executor",       # If a tool needs to be called
             "ask_for_info": "ask_for_info",     # If more info is needed from the user
             "respond_directly": "prepare_response", # If Gemini can respond directly
-            "error": "prepare_response"         # If an error occurred in agent_node
+            "error": "prepare_response",         # If an error occurred in agent_node
+            "confirm_booking": "confirm_booking", # if the user has multiple bookings to chose.
         },
     )
 
@@ -506,10 +813,14 @@ def create_booking_agent_graph():
     # After asking for info, the flow goes back to the agent to process the user's next input
     workflow.add_edge("ask_for_info", "agent")
 
+    # Add the edge from confirm booking
+    workflow.add_edge("confirm_booking", "agent")
+
     # The final response from 'prepare_response' marks the end of a turn
     workflow.add_edge("prepare_response", END)
 
     return workflow.compile()
+
 
 # --- Example Usage (for local testing and demonstration) ---
 if __name__ == "__main__":
@@ -529,9 +840,11 @@ if __name__ == "__main__":
 
     # Add a restaurant
     restaurant1 = Restaurant(name="The Fancy Fork", address="123 Main St", phone_number="555-1234")
-    session.add(restaurant1)
+    restaurant2 = Restaurant(name="The Great Bistro", address="456 Oak Ave", phone_number="555-5678")
+    session.add_all([restaurant1, restaurant2])
     session.commit()
     session.refresh(restaurant1)
+    session.refresh(restaurant2)
 
     # Add availability slots for the restaurant
     session.add_all([
@@ -551,17 +864,22 @@ if __name__ == "__main__":
     ])
     session.commit()
 
-    # Add a customer
+    # Add customers
     customer1 = Customer(
         first_name="John", surname="Doe", email="john.doe@example.com", mobile="1234567890",
         receive_email_marketing=True
     )
-    session.add(customer1)
+    customer2 = Customer(
+        first_name="Alice", surname="Smith", email="alice.smith@example.com", mobile="0987654321",
+        receive_email_marketing=False
+    )
+    session.add_all([customer1, customer2])
     session.commit()
     session.refresh(customer1)
+    session.refresh(customer2)
 
-    # Add an existing booking for John Doe
-    existing_booking = Booking(
+    # Add existing bookings
+    existing_booking1 = Booking(
         booking_reference="ABCDEFG",
         restaurant_id=restaurant1.id,
         customer_id=customer1.id,
@@ -571,7 +889,27 @@ if __name__ == "__main__":
         channel_code="ONLINE",
         status="confirmed"
     )
-    session.add(existing_booking)
+    existing_booking2 = Booking(
+        booking_reference="HIJKLMN",
+        restaurant_id=restaurant2.id,
+        customer_id=customer1.id,
+        visit_date=date(2025, 11, 15),
+        visit_time=time(18, 30, 0),
+        party_size=2,
+        channel_code="ONLINE",
+        status="confirmed"
+    )
+    existing_booking3 = Booking(
+        booking_reference="OPQRSTU",
+        restaurant_id=restaurant1.id,
+        customer_id=customer2.id,
+        visit_date=date(2025, 10, 10),
+        visit_time=time(20, 0, 0),
+        party_size=5,
+        channel_code="ONLINE",
+        status="confirmed"
+    )
+    session.add_all([existing_booking1, existing_booking2, existing_booking3])
     session.commit()
     session.close()
 
@@ -596,6 +934,7 @@ if __name__ == "__main__":
             customer_group_email_marketing_opt_in_text=None, customer_group_sms_marketing_opt_in_text=None,
             customer_receive_restaurant_email_marketing=None, customer_receive_restaurant_sms_marketing=None,
             customer_restaurant_email_marketing_opt_in_text=None, customer_restaurant_sms_marketing_opt_in_text=None,
+            query_condition=None, booking_conditions=None, restaurant_conditions=None,
         )
 
         current_state = initial_state
@@ -647,11 +986,18 @@ if __name__ == "__main__":
     print("\n--- Conversation 7: Customer Bookings Summary Example ---")
     run_conversation(app_graph, "What bookings do I have? My email is john.doe@example.com.", thread_id="customer_bookings_thread_1")
 
-    print("\n--- Conversation 8: Get Restaurants (Specific) Example ---")
-    run_conversation(app_graph, "Are there any restaurants called 'The Fancy Fork'?", thread_id="get_restaurant_specific_thread_1")
+    print("\n--- Conversation 8: Get Restaurants (Specific) Example - using filter now ---")
+    run_conversation(app_graph, "Are there any restaurants with 'Fancy' in their name?", thread_id="get_restaurant_fancy_thread")
 
     print("\n--- Conversation 9: Get All Restaurants Example ---")
     run_conversation(app_graph, "List all restaurants.", thread_id="get_all_restaurants_thread_1")
+
+    print("\n--- Conversation 10: Customer Bookings Summary with party size filter ---")
+    run_conversation(app_graph, "What bookings does john.doe@example.com have for more than 3 people?", thread_id="customer_bookings_filter_thread_1")
+
+    print("\n--- Conversation 11: Customer Bookings Summary with date range filter ---")
+    run_conversation(app_graph, "What bookings does alice.smith@example.com have in October 2025?", thread_id="customer_bookings_filter_thread_2")
+
 
     # Clean up dummy data after tests
     session = next(get_db())

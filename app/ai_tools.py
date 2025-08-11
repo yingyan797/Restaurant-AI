@@ -7,7 +7,7 @@ Author: AI Assistant
 
 from typing import Dict, List, Any, Optional, Union, Type, Callable
 from dataclasses import dataclass
-from enum import Enum
+
 import logging
 from datetime import date, time, datetime
 from fastapi import HTTPException
@@ -16,26 +16,11 @@ from app.models import Restaurant, Customer, Booking, AvailabilitySlot, Cancella
 from app.routers.availability import availability_search, MOCK_BEARER_TOKEN
 from app.routers.booking import create_booking_with_stripe, cancel_booking, get_booking, update_booking
 
-class FilterOperator(Enum):
-    """Supported filter operations"""
-    EQUALS = "eq"
-    NOT_EQUALS = "ne"
-    LESS_THAN = "lt"
-    LESS_THAN_OR_EQUAL = "lte"
-    GREATER_THAN = "gt"
-    GREATER_THAN_OR_EQUAL = "gte"
-    IN = "in"
-    NOT_IN = "not_in"
-    LIKE = "like"
-    ILIKE = "ilike"  # case-insensitive like
-    IS_NULL = "is_null"
-    IS_NOT_NULL = "is_not_null"
-
 @dataclass
 class FilterCondition:
     """Represents a single filter condition"""
     column: str
-    operator: FilterOperator
+    operator: str
     value: Any = None
     
     def apply_to_query(self, query, model):
@@ -45,29 +30,29 @@ class FilterCondition:
         
         column_attr = getattr(model, self.column)
         
-        if self.operator == FilterOperator.EQUALS:
+        if self.operator == "eq":
             return query.filter(column_attr == self.value)
-        elif self.operator == FilterOperator.NOT_EQUALS:
+        elif self.operator == "ne":
             return query.filter(column_attr != self.value)
-        elif self.operator == FilterOperator.LESS_THAN:
+        elif self.operator == "lt":
             return query.filter(column_attr < self.value)
-        elif self.operator == FilterOperator.LESS_THAN_OR_EQUAL:
+        elif self.operator == "lte":
             return query.filter(column_attr <= self.value)
-        elif self.operator == FilterOperator.GREATER_THAN:
+        elif self.operator == "gt":
             return query.filter(column_attr > self.value)
-        elif self.operator == FilterOperator.GREATER_THAN_OR_EQUAL:
+        elif self.operator == "gte":
             return query.filter(column_attr >= self.value)
-        elif self.operator == FilterOperator.IN:
+        elif self.operator == "in":
             return query.filter(column_attr.in_(self.value))
-        elif self.operator == FilterOperator.NOT_IN:
+        elif self.operator == "not_in":
             return query.filter(~column_attr.in_(self.value))
-        elif self.operator == FilterOperator.LIKE:
+        elif self.operator == "like":
             return query.filter(column_attr.like(self.value))
-        elif self.operator == FilterOperator.ILIKE:
+        elif self.operator == "ilike":
             return query.filter(column_attr.ilike(self.value))
-        elif self.operator == FilterOperator.IS_NULL:
+        elif self.operator == "is_null":
             return query.filter(column_attr.is_(None))
-        elif self.operator == FilterOperator.IS_NOT_NULL:
+        elif self.operator == "is_not_null":
             return query.filter(column_attr.isnot(None))
         elif self.operator == "between":
             if not isinstance(self.value, (list, tuple)) or len(self.value) != 2:
@@ -158,11 +143,11 @@ def get_db_session() -> Optional[Session]:
 # Convenience functions for common filter patterns
 def create_equals_filter(column: str, value: Any) -> FilterCondition:
     """Create an equals filter condition"""
-    return FilterCondition(column=column, operator=FilterOperator.EQUALS, value=value)
+    return FilterCondition(column=column, operator="eq", value=value)
 
 def create_in_filter(column: str, values: List[Any]) -> FilterCondition:
     """Create an IN filter condition"""
-    return FilterCondition(column=column, operator=FilterOperator.IN, value=values)
+    return FilterCondition(column=column, operator="in", value=values)
 
 def create_range_filter(column: str, lower: Any, upper: Any) -> FilterCondition:
     """Create a date range filter condition"""
@@ -170,8 +155,40 @@ def create_range_filter(column: str, lower: Any, upper: Any) -> FilterCondition:
 
 def create_like_filter(column: str, pattern: str, case_sensitive: bool = True) -> FilterCondition:
     """Create a LIKE filter condition"""
-    operator = FilterOperator.LIKE if case_sensitive else FilterOperator.ILIKE
+    operator = "like" if case_sensitive else "ilike"
     return FilterCondition(column=column, operator=operator, value=pattern)
+
+def create_not_equals_filter(column: str, value: Any) -> FilterCondition:
+    """Create a not equals filter condition"""
+    return FilterCondition(column=column, operator="ne", value=value)
+
+def create_less_than_filter(column: str, value: Any) -> FilterCondition:
+    """Create a less than filter condition"""
+    return FilterCondition(column=column, operator="lt", value=value)
+
+def create_less_than_or_equal_filter(column: str, value: Any) -> FilterCondition:
+    """Create a less than or equal filter condition"""
+    return FilterCondition(column=column, operator="lte", value=value)
+
+def create_greater_than_filter(column: str, value: Any) -> FilterCondition:
+    """Create a greater than filter condition"""
+    return FilterCondition(column=column, operator="gt", value=value)
+
+def create_greater_than_or_equal_filter(column: str, value: Any) -> FilterCondition:
+    """Create a greater than or equal filter condition"""
+    return FilterCondition(column=column, operator="gte", value=value)
+
+def create_not_in_filter(column: str, values: List[Any]) -> FilterCondition:
+    """Create a NOT IN filter condition"""
+    return FilterCondition(column=column, operator="not_in", value=values)
+
+def create_is_null_filter(column: str) -> FilterCondition:
+    """Create an IS NULL filter condition"""
+    return FilterCondition(column=column, operator="is_null")
+
+def create_is_not_null_filter(column: str) -> FilterCondition:
+    """Create an IS NOT NULL filter condition"""
+    return FilterCondition(column=column, operator="is_not_null")
 
 def query_table(table_name: str, query_condition: QueryCondition = None) -> QueryResult:
     """
@@ -247,13 +264,13 @@ def query_table(table_name: str, query_condition: QueryCondition = None) -> Quer
 
 class AIToolCallingInterface:
     '''Export all functions and API callable by LangGraph AI agents'''
-    HELPER_CLASSES = [QueryCondition, FilterCondition, FilterOperator]
+    HELPER_CLASSES = [QueryCondition, FilterCondition]
 
     def get_customer_information(email: str) -> QueryResult:
         """Get customer information by email"""
         filter_condition = FilterCondition(
             column="email",
-            operator=FilterOperator.EQUALS,
+            operator="eq",
             value=email
         )
         
@@ -310,7 +327,7 @@ class AIToolCallingInterface:
         customer_id = customer_result.data[0]["id"]
         customer_filter = FilterCondition(
             column="customer_id",
-            operator=FilterOperator.EQUALS,
+            operator="eq",
             value=customer_id
         )
         if not booking_conditions:
@@ -331,7 +348,7 @@ class AIToolCallingInterface:
                     # Get restaurant data
                     restaurant_filter = FilterCondition(
                         column="id",
-                        operator=FilterOperator.EQUALS,
+                        operator="eq",
                         value=restaurant_id
                     )
                     if restaurant_conditions.limit != 1:
@@ -443,8 +460,14 @@ class AIToolCallingInterface:
         "UpdateBookingDetailsTool": update_booking_details,
         "GetCustomerBookingsAndRestaurantsSummaryTool": customer_bookings_and_restaurants_summary,
         "ListCancellationReasonsTool": list_cancellation_reasons, "GetRestaurantsTool": get_restaurants,
-    }
 
+        "CreateEqualsFilterTool": create_equals_filter, "CreateInFilterTool": create_in_filter,
+        "CreateRangeFilterTool": create_range_filter, "CreateLikeFilterTool": create_like_filter,
+        "CreateNotEqualsFilterTool": create_not_equals_filter, "CreateLessThanFilterTool": create_less_than_filter,
+        "CreateLessThanOrEqualFilterTool": create_less_than_or_equal_filter, "CreateGreaterThanFilterTool": create_greater_than_filter,
+        "CreateGreaterThanOrEqualFilterTool": create_greater_than_or_equal_filter, "CreateNotInFilterTool": create_not_in_filter,
+        "CreateIsNullFilterTool": create_is_null_filter, "CreateIsNotNullFilterTool": create_is_not_null_filter,
+    }
 
 def test_data():
     import sqlite3
