@@ -8,9 +8,13 @@ Author: AI Assistant
 from typing import Dict, List, Any, Optional, Union, Type, Callable
 from dataclasses import dataclass
 from enum import Enum
-
-from app.database import get_db, Base
+import logging
+from datetime import date, time, datetime
+from fastapi import HTTPException
+from app.database import get_db, Base, Session
 from app.models import Restaurant, Customer, Booking, AvailabilitySlot, CancellationReason
+from app.routers.availability import availability_search, MOCK_BEARER_TOKEN
+from app.routers.booking import create_booking_with_stripe, cancel_booking, get_booking, update_booking
 
 class FilterOperator(Enum):
     """Supported filter operations"""
@@ -26,7 +30,6 @@ class FilterOperator(Enum):
     ILIKE = "ilike"  # case-insensitive like
     IS_NULL = "is_null"
     IS_NOT_NULL = "is_not_null"
-    BETWEEN = "between"
 
 @dataclass
 class FilterCondition:
@@ -66,7 +69,7 @@ class FilterCondition:
             return query.filter(column_attr.is_(None))
         elif self.operator == FilterOperator.IS_NOT_NULL:
             return query.filter(column_attr.isnot(None))
-        elif self.operator == FilterOperator.BETWEEN:
+        elif self.operator == "between":
             if not isinstance(self.value, (list, tuple)) or len(self.value) != 2:
                 raise ValueError("BETWEEN operator requires a list/tuple of 2 values")
             return query.filter(column_attr.between(self.value[0], self.value[1]))
@@ -74,13 +77,16 @@ class FilterCondition:
             raise ValueError(f"Unsupported filter operator: {self.operator}")
 
 @dataclass
-class QueryConfig:
+class QueryCondition:
     """Constraints and displayed information for database queries"""
     filters: Optional[List[FilterCondition]] = None
-    columns: Optional[List[str]] = None
     limit: Optional[int] = None
     offset: Optional[int] = None
     order_by: Optional[List[str]] = None  # List of column names to order by
+
+    @staticmethod
+    def create_empty_condition():
+        return QueryCondition(filters=[])
 
 @dataclass
 class QueryResult:
@@ -135,7 +141,39 @@ class DatabaseInterface:
         
         return item_dict
 
-def query_table(table_name: str, query_config: QueryConfig) -> QueryResult:
+# Set up logging for better visibility during execution
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- Helper for Database Session Management ---
+def get_db_session() -> Optional[Session]:
+    """Helper to get a database session. Used by tool wrappers."""
+    try:
+        db = next(get_db())
+        return db
+    except Exception as e:
+        logger.error(f"Error getting DB session: {e}")
+        return None
+
+# Convenience functions for common filter patterns
+def create_equals_filter(column: str, value: Any) -> FilterCondition:
+    """Create an equals filter condition"""
+    return FilterCondition(column=column, operator=FilterOperator.EQUALS, value=value)
+
+def create_in_filter(column: str, values: List[Any]) -> FilterCondition:
+    """Create an IN filter condition"""
+    return FilterCondition(column=column, operator=FilterOperator.IN, value=values)
+
+def create_range_filter(column: str, lower: Any, upper: Any) -> FilterCondition:
+    """Create a date range filter condition"""
+    return FilterCondition(column=column, operator="between", value=[lower, upper])
+
+def create_like_filter(column: str, pattern: str, case_sensitive: bool = True) -> FilterCondition:
+    """Create a LIKE filter condition"""
+    operator = FilterOperator.LIKE if case_sensitive else FilterOperator.ILIKE
+    return FilterCondition(column=column, operator=operator, value=pattern)
+
+def query_table(table_name: str, query_condition: QueryCondition = None) -> QueryResult:
     """
     Generic table query function.
     
@@ -143,7 +181,6 @@ def query_table(table_name: str, query_config: QueryConfig) -> QueryResult:
         table_name: Name of table to query
         query_config: 
          - filters: List of FilterCondition objects
-         - columns: Specific columns to return
          - limit: Maximum number of records
          - offset: Number of records to skip
          - order_by: List of column names to order by
@@ -160,33 +197,34 @@ def query_table(table_name: str, query_config: QueryConfig) -> QueryResult:
                 error=f"Table '{table_name}' not found"
             )
         
-        db = next(get_db())
+        db = get_db_session()
         model = DatabaseInterface.TABLE_MODELS[table_name]
         query = db.query(model)
         
-        # Apply filters
-        if query_config.filters:
-            for filter_condition in query_config.filters:
-                query = filter_condition.apply_to_query(query, model)
-        
-        # Apply ordering
-        if query_config.order_by:
-            for column_name in query_config.order_by:
-                if hasattr(model, column_name):
-                    query = query.order_by(getattr(model, column_name))
-        
-        # Apply offset
-        if query_config.offset:
-            query = query.offset(query_config.offset)
-        
-        # Apply limit
-        if query_config.limit:
-            query = query.limit(query_config.limit)
+        if query_condition is not None:
+            # Apply filters
+            if query_condition.filters:
+                for filter_condition in query_condition.filters:
+                    query = filter_condition.apply_to_query(query, model)
+            
+            # Apply ordering
+            if query_condition.order_by:
+                for column_name in query_condition.order_by:
+                    if hasattr(model, column_name):
+                        query = query.order_by(getattr(model, column_name))
+            
+            # Apply offset
+            if query_condition.offset:
+                query = query.offset(query_condition.offset)
+            
+            # Apply limit
+            if query_condition.limit:
+                query = query.limit(query_condition.limit)
         
         results = query.all()
         
         # Convert to dict format
-        result_data = [DatabaseInterface._convert_to_dict(item, query_config.columns) for item in results]
+        result_data = [DatabaseInterface._convert_to_dict(item) for item in results]
         
         return QueryResult(
             success=True,
@@ -194,7 +232,7 @@ def query_table(table_name: str, query_config: QueryConfig) -> QueryResult:
             count=len(result_data),
             metadata={
                 'table': table_name,
-                'filters': [f"{f.column} {f.operator.value} {f.value}" for f in query_config.filters] if query_config.filters else [],
+                'filters': [f"{f.column} {f.operator} {f.value}" for f in query_condition.filters] if query_condition.filters else [],
                 'total_results': len(result_data)
             }
         )
@@ -207,137 +245,219 @@ def query_table(table_name: str, query_config: QueryConfig) -> QueryResult:
             error=str(e)
         )
 
-def get_customer_information(email: str, columns: Optional[List[str]] = None) -> QueryResult:
-    """Get customer information by email"""
-    filter_condition = FilterCondition(
-        column="email",
-        operator=FilterOperator.EQUALS,
-        value=email
-    )
-    
-    return query_table(
-        "customers",
-        QueryConfig(
-            filters=[filter_condition],
-            columns=columns,
-            limit=1
+class AIToolCallingInterface:
+    '''Export all functions and API callable by LangGraph AI agents'''
+    HELPER_CLASSES = [QueryCondition, FilterCondition, FilterOperator]
+
+    def get_customer_information(email: str) -> QueryResult:
+        """Get customer information by email"""
+        filter_condition = FilterCondition(
+            column="email",
+            operator=FilterOperator.EQUALS,
+            value=email
         )
-    )
-
-def check_customer_bookings_and_restaurants(
-    email: str,
-    booking_config: Optional[QueryConfig] = None,
-    restaurant_config: Optional[QueryConfig] = None
-) -> QueryResult:
-    """Get customer bookings with optional restaurant information"""
-    
-    # Initialize configs if not provided
-    if booking_config is None:
-        booking_config = QueryConfig()
-    if booking_config.filters is None:
-        booking_config.filters = []
-    if restaurant_config is not None and "restaurant_id" not in booking_config.columns:
-        booking_config.columns.append("restaurant_id")
-    
-    # Get customer information
-    customer_result = get_customer_information(email, ["id"])
-    
-    if not customer_result.success or not customer_result.data:
-        return QueryResult(
-            success=False,
-            data=[],
-            count=0,
-            error="Customer not found"
+        
+        return query_table(
+            "customers",
+            QueryCondition(
+                filters=[filter_condition],
+                limit=1
+            )
         )
-    
-    customer_id = customer_result.data[0]["id"]
-    
-    # Add customer filter to booking config
-    customer_filter = FilterCondition(
-        column="customer_id",
-        operator=FilterOperator.EQUALS,
-        value=customer_id
-    )
-    booking_config.filters.append(customer_filter)
-    
-    # Get bookings
-    bookings_result = query_table("bookings", booking_config)
-    
-    if not bookings_result.success:
-        return bookings_result
-    
-    # Enrich with restaurant data if requested
-    if restaurant_config is not None and bookings_result.data:
-        restaurant_cache = {}
+
+    def get_restaurants(query_condition: QueryCondition = None) -> QueryResult:
+        """Get information of all restauarants satisfying certain constraints"""
+        return query_table("restaurants", query_condition)
+
+    def list_cancellation_reasons() -> QueryResult:
+        """Get all possible cancellation reasons with ID, title, and description"""
+        return query_table("cancellation_reasons")
+
+    def customer_bookings_and_restaurants_summary(
+        email: str,
+        booking_conditions: Optional[QueryCondition] = None,
+        restaurant_conditions: Optional[QueryCondition] = None
+    ) -> Dict[str, str]:
+        """
+        Per-customer conditional booking reference and restaurant retrieval
         
-        for booking in bookings_result.data:
-            restaurant_id = booking.get("restaurant_id")
-            if restaurant_id not in restaurant_cache:
-                # Get restaurant data
-                restaurant_filter = FilterCondition(
-                    column="id",
-                    operator=FilterOperator.EQUALS,
-                    value=restaurant_id
-                )
-                
-                restaurant_query_config = QueryConfig(
-                    filters=[restaurant_filter] + (restaurant_config.filters or []),
-                    columns=restaurant_config.columns,
-                    limit=1
-                )
-                
-                restaurant_cache[restaurant_id] = query_table("restaurants", restaurant_query_config)
-            
-            restaurant = restaurant_cache[restaurant_id]
-            if restaurant.success:
-                for key, value in restaurant.data[0].items():
-                    booking[f"restaurant_{key}"] = value
+        Args:
+            email: User's email address
+            booking_conditions :
+            - filters: List of FilterCondition objects
+            - limit: Maximum number of records
+            - offset: Number of records to skip
+            - order_by: List of column names to order by
+            restaurant_conditions: same as booking_conditions
         
-    return bookings_result
+        Returns:
+            Dict including
+            - booking_summary: a map of booking reference to restaurant_name
+            - booked_restaurants: information of all booked restaurants without repetition
+        """
 
-# Convenience functions for common filter patterns
-def create_equals_filter(column: str, value: Any) -> FilterCondition:
-    """Create an equals filter condition"""
-    return FilterCondition(column=column, operator=FilterOperator.EQUALS, value=value)
+        # Get customer information
+        customer_result = AIToolCallingInterface.get_customer_information(email)
+        if not customer_result.success or not customer_result.data:
+            return QueryResult(
+                success=False,
+                data=[],
+                count=0,
+                error="Customer not found"
+            )
+        
+        # Add customer filter to booking config
+        customer_id = customer_result.data[0]["id"]
+        customer_filter = FilterCondition(
+            column="customer_id",
+            operator=FilterOperator.EQUALS,
+            value=customer_id
+        )
+        if not booking_conditions:
+            booking_conditions = QueryCondition.create_empty_condition()
+        if not restaurant_conditions:
+            restaurant_conditions = QueryCondition.create_empty_condition()
 
-def create_in_filter(column: str, values: List[Any]) -> FilterCondition:
-    """Create an IN filter condition"""
-    return FilterCondition(column=column, operator=FilterOperator.IN, value=values)
+        # Get bookings for customer
+        booking_conditions.filters.append(customer_filter)
+        bookings = query_table("bookings", booking_conditions)
+        
+        if bookings.success and bookings.data:
+            booking_summary = []
+            restaurant_cache = {}
+            for booking in bookings.data:
+                restaurant_id = booking.get("restaurant_id")
+                if restaurant_id not in restaurant_cache:
+                    # Get restaurant data
+                    restaurant_filter = FilterCondition(
+                        column="id",
+                        operator=FilterOperator.EQUALS,
+                        value=restaurant_id
+                    )
+                    if restaurant_conditions.limit != 1:
+                        restaurant_conditions.limit = 1
+                    restaurant_conditions.filters.append(restaurant_filter)
+                    restaurant_cache[restaurant_id] = query_table("restaurants", restaurant_conditions)
+                
+                restaurant = restaurant_cache[restaurant_id]
+                if restaurant.success and restaurant.data:
+                    booking_summary.append({"booking_reference": booking.get("booking_reference"),
+                                            "restaurant_name": restaurant.data[0].get("name")})
+                    
+            return {
+                "bookings_summary": booking_summary,
+                "booked_restaurants": [restaurant.data[0] for restaurant in restaurant_cache.values() if restaurant.success and restaurant.data]
+            }
+        return "No booking or restaurant matches the search condition"
 
-def create_date_range_filter(column: str, start_date: Any, end_date: Any) -> FilterCondition:
-    """Create a date range filter condition"""
-    return FilterCondition(column=column, operator=FilterOperator.BETWEEN, value=[start_date, end_date])
+    def search_availability(restaurant_name: str, VisitDate: str, PartySize: int, ChannelCode: str = "ONLINE") -> Dict[str, Any]:
+        """Wrapper for availability_search API."""
+        db = get_db_session()
+        if not db: return {"error": "Database connection error."}
+        try:
+            result = availability_search(restaurant_name, date.fromisoformat(VisitDate), PartySize, ChannelCode, db, MOCK_BEARER_TOKEN)
+            return result
+        except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
+        except Exception as e: return {"error": str(e)}
+        finally: db.close()
 
-def create_like_filter(column: str, pattern: str, case_sensitive: bool = True) -> FilterCondition:
-    """Create a LIKE filter condition"""
-    operator = FilterOperator.LIKE if case_sensitive else FilterOperator.ILIKE
-    return FilterCondition(column=column, operator=operator, value=pattern)
+    def create_booking(
+        restaurant_name: str, VisitDate: str, VisitTime: str, PartySize: int,
+        customer_email: str, customer_first_name: str, customer_surname: str, customer_mobile: str,
+        ChannelCode: str = "ONLINE", SpecialRequests: Optional[str] = None,
+        IsLeaveTimeConfirmed: Optional[bool] = False, RoomNumber: Optional[str] = None,
+        customer_title: Optional[str] = None, customer_mobile_country_code: Optional[str] = None,
+        customer_phone_country_code: Optional[str] = None, customer_phone: Optional[str] = None,
+        customer_receive_email_marketing: Optional[bool] = False, customer_receive_sms_marketing: Optional[bool] = False,
+        customer_group_email_marketing_opt_in_text: Optional[str] = None, customer_group_sms_marketing_opt_in_text: Optional[str] = None,
+        customer_receive_restaurant_email_marketing: Optional[bool] = False, customer_receive_restaurant_sms_marketing: Optional[bool] = False,
+        customer_restaurant_email_marketing_opt_in_text: Optional[str] = None, customer_restaurant_sms_marketing_opt_in_text: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Wrapper for create_booking_with_stripe API."""
+        db = get_db_session()
+        if not db: return {"error": "Database connection error."}
+        try:
+            result = create_booking_with_stripe(
+                restaurant_name=restaurant_name, VisitDate=date.fromisoformat(VisitDate), VisitTime=time.fromisoformat(VisitTime),
+                PartySize=PartySize, ChannelCode=ChannelCode, SpecialRequests=SpecialRequests,
+                IsLeaveTimeConfirmed=IsLeaveTimeConfirmed, RoomNumber=RoomNumber,
+                Title=customer_title, FirstName=customer_first_name, Surname=customer_surname,
+                MobileCountryCode=customer_mobile_country_code, Mobile=customer_mobile,
+                PhoneCountryCode=customer_phone_country_code, Phone=customer_phone, Email=customer_email,
+                ReceiveEmailMarketing=customer_receive_email_marketing, ReceiveSmsMarketing=customer_receive_sms_marketing,
+                GroupEmailMarketingOptInText=customer_group_email_marketing_opt_in_text,
+                GroupSmsMarketingOptInText=customer_group_sms_marketing_opt_in_text,
+                ReceiveRestaurantEmailMarketing=customer_receive_restaurant_email_marketing,
+                ReceiveRestaurantSmsMarketing=customer_receive_restaurant_sms_marketing,
+                RestaurantEmailMarketingOptInText=customer_restaurant_email_marketing_opt_in_text,
+                RestaurantSmsMarketingOptInText=customer_restaurant_sms_marketing_opt_in_text,
+                db=db, token=MOCK_BEARER_TOKEN
+            )
+            return result
+        except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
+        except Exception as e: return {"error": str(e)}
+        finally: db.close()
+
+    def cancel_booking(restaurant_name: str, booking_reference: str, micrositeName: str, cancellationReasonId: int) -> Dict[str, Any]:
+        """Wrapper for cancel_booking API."""
+        db = get_db_session()
+        if not db: return {"error": "Database connection error."}
+        try:
+            result = cancel_booking(restaurant_name, booking_reference, micrositeName, booking_reference, cancellationReasonId, db, MOCK_BEARER_TOKEN)
+            return result
+        except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
+        except Exception as e: return {"error": str(e)}
+        finally: db.close()
+
+    def get_booking_details(restaurant_name: str, booking_reference: str) -> Dict[str, Any]:
+        """Wrapper for get_booking API."""
+        db = get_db_session()
+        if not db: return {"error": "Database connection error."}
+        try:
+            result = get_booking(restaurant_name, booking_reference, db, MOCK_BEARER_TOKEN)
+            return result
+        except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
+        except Exception as e: return {"error": str(e)}
+        finally: db.close()
+
+    def update_booking_details(
+        restaurant_name: str, booking_reference: str,
+        VisitDate: Optional[str] = None, VisitTime: Optional[str] = None, PartySize: Optional[int] = None,
+        SpecialRequests: Optional[str] = None, IsLeaveTimeConfirmed: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        """Wrapper for update_booking API."""
+        db = get_db_session()
+        if not db: return {"error": "Database connection error."}
+        try:
+            visit_date_obj = date.fromisoformat(VisitDate) if VisitDate else None
+            visit_time_obj = time.fromisoformat(VisitTime) if VisitTime else None
+            result = update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, PartySize, SpecialRequests, IsLeaveTimeConfirmed, db, MOCK_BEARER_TOKEN)
+            return result
+        except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
+        except Exception as e: return {"error": str(e)}
+        finally: db.close()
+
+    TOOL_FUNCTIONS = {
+        "SearchAvailabilityTool": search_availability, "CreateBookingTool": create_booking,
+        "CancelBookingTool": cancel_booking, "GetBookingDetailsTool": get_booking_details,
+        "UpdateBookingDetailsTool": update_booking_details,
+        "GetCustomerBookingsAndRestaurantsSummaryTool": customer_bookings_and_restaurants_summary,
+        "ListCancellationReasonsTool": list_cancellation_reasons, "GetRestaurantsTool": get_restaurants,
+    }
+
 
 def test_data():
     import sqlite3
     _con = sqlite3.connect("restaurant_booking.db")
-    _con.execute("delete from customers")
-    _con.execute("delete from bookings")
+    print(_con.execute("select * from bookings").fetchall())
     _con.commit()
 
 if __name__ == "__main__":
     # Example usage
     # test_data()
-    booking_config = QueryConfig(
-        columns=[],
-        limit=10
-    )
-    
-    result = check_customer_bookings_and_restaurants(
+    result = AIToolCallingInterface.customer_bookings_and_restaurants_summary(
         "yingyan797@restaurantai.com",
-        booking_config=booking_config,
-        restaurant_config=QueryConfig(columns=["name"])
+        QueryCondition([create_range_filter("party_size", 3, 9)])
     )
     
-    print(f"Success: {result.success}")
-    print(f"Count: {result.count}")
-    if result.success:
-        for booking in result.data:
-            print(booking)
-    else:
-        print(f"Error: {result.error}")
+    print(result)
