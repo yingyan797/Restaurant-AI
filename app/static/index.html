@@ -6,6 +6,9 @@
     <title>Restaurant Booking System</title>
     <link rel="icon" type="image/png" href="static/icon.png"/>
     <style>
+        table {width:100%; border-collapse: collapse; margin-top: 10px}
+        tr {background-color:#f2f2f2}
+        th, td {padding: 8px; text-align: left; border: 1px solid #ddd}
         h3 {background-color: skyblue; padding: 3px; border-radius: 2px; border: skyblue solid;}
         h3:hover {border: dashed; cursor: pointer; }
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; height: 100vh; }
@@ -20,7 +23,7 @@
         .message { padding: 8px; border-radius: 5px; margin-bottom: 5px;}
         .user-message { background: green; color: white; text-align: right; max-width: 85%; margin-right: 2px; margin-left: auto;}
         .bot-message { background: #e9ecef; color: #333; max-width: 85%; margin-left: 2px; margin-right: auto;}
-        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; display: none; background-color: lightcyan;}
+        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: lightcyan;}
         input, select, textarea, button { margin: 5px 0; padding: 8px; box-sizing: border-box; }
         button { background: #333; color: white; border: none; cursor: pointer; }
         button:hover { background: #0056b3; }
@@ -36,6 +39,13 @@
         .email-display {font-size: small; color: green; margin-left: 10px;}
         .email-display:hover {cursor: pointer; border-bottom: solid;}
         .hidden { display: none; }
+        .optional-section { background: #f0f8ff; border: 1px dashed #ccc; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .toggle-btn { background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; }
+        .toggle-btn:hover { background: #555; }
+        .field-group { margin: 10px 0; }
+        .field-label { font-weight: bold; margin-right: 10px; }
+        .inline-fields { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .inline-fields input, .inline-fields select { flex: 1; min-width: 120px; }
     </style>
 </head>
 <body>
@@ -50,7 +60,9 @@
     </div>
     <div class="container" id="mainContainer">
         <div class="chat-panel">
-            <h2>Restaurant Booking Assistant <span id="login" class="email-display" title="Click to change" onclick="changeEmail()"></span></h2>
+            <h2>Restaurant AI 
+                <span id="login" class="email-display" title="Click to change" onclick="changeEmail()"></span>
+            </h2>
             <div class="chat-messages" id="chatMessages">
                 <div class="message bot-message">Hello! I'm your restaurant booking assistant. I can help you check availability, make bookings, or manage existing reservations. What would you like to do?</div>
             </div>
@@ -58,52 +70,178 @@
                 <textarea class="message" id="chatInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)"></textarea>
                 <button onclick="sendMessage()">Send</button>
             </div>
+            <div style="background-color: azure;">
+                <button onclick="writeMessage('Yes')">Yes</button>
+                <button onclick="writeMessage('No')">No</button>
+                <button onclick="writeMessage('Cancel')" style="height: 30px;">Cancel</button>
+                <button onclick="writeMessage('1')" style="height: 30px;">1</button>
+                <button onclick="writeMessage('2')" style="height: 30px;">2</button>
+                <button onclick="writeMessage('3')" style="height: 30px;">3</button>
+                <button onclick="writeMessage('4')" style="height: 30px;">4</button>
+                <button onclick="writeMessage('5')" style="height: 30px;">5</button> | 
+                <button onclick="resetChat()" style="color: salmon;">Reset chat</button>
+            </div>
         </div>
         
         <div class="booking-panel" style="background-image: url('static/archer3.jpg');">            
             <h3 onclick="showSection('avail')">Check Availability</h3>
             <div class="section" id="avail">
-                Restaurant name: <input type="text" id="availName" value="TheHungryUnicorn" required> <br>
-                Visit date: <input type="date" id="visitDate" required> Party size:
-                <input type="number" id="partySize" placeholder="1-20" min="1" max="20" required>
+                <div class="field-group">
+                    <span class="field-label">Restaurant name:</span>
+                    <input type="text" id="availName" value="TheHungryUnicorn" required>
+                </div>
+                <div class="field-group">
+                    <div class="inline-fields">
+                        <span class="field-label">Visit date:</span>
+                        <input type="date" id="visitDate" required>
+                        <span class="field-label">Party size:</span>
+                        <input type="number" id="partySize" placeholder="1-20" min="1" max="20" required>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <span class="field-label">Channel code:</span>
+                    <select id="availChannelCode">
+                        <option value="ONLINE">ONLINE</option>
+                        <option value="PHONE">PHONE</option>
+                        <option value="WALK_IN">WALK_IN</option>
+                    </select>
+                </div>
                 <button onclick="checkAvailability()">Check Availability</button>
                 <div id="availabilityResult" class="result" style="display:none;"></div>
             </div>
 
             <h3 onclick="showSection('book')">Make Booking</h3>
             <div class="section" id="book">
-                Restaurant name: <input type="text" id="bookingName" value="TheHungryUnicorn" required> <br>
-                Date and Time: <input type="date" id="bookingDate" required>
-                <input type="time" id="bookingTime" required>
-                Party size:
-                <input type="number" id="bookingPartySize" placeholder="1-20" min="1" max="20" required> <br>
-                Customer name:
-                <input type="text" id="firstName" placeholder="First Name">
-                <input type="text" id="surname" placeholder="Surname"> <br>
-                Contact:
-                <input type="email" id="email" placeholder="Email" style="width: 45%;">
-                <input type="tel" id="mobile" placeholder="Mobile"> <br>
-                Special requests:
-                <textarea id="specialRequests" placeholder="Special Requests" rows="2" style="width: 95%;"></textarea>
+                <div class="field-group">
+                    <span class="field-label">Restaurant name:</span>
+                    <input type="text" id="bookingName" value="TheHungryUnicorn" required>
+                </div>
+                <div class="field-group">
+                    <div class="inline-fields">
+                        <span class="field-label">Date:</span>
+                        <input type="date" id="bookingDate" required>
+                        <span class="field-label">Time:</span>
+                        <input type="time" id="bookingTime" required>
+                        <span class="field-label">Party size:</span>
+                        <input type="number" id="bookingPartySize" placeholder="1-20" min="1" max="20" required>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <span class="field-label">Channel code:</span>
+                    <select id="bookingChannelCode">
+                        <option value="ONLINE">ONLINE</option>
+                        <option value="PHONE">PHONE</option>
+                        <option value="WALK_IN">WALK_IN</option>
+                    </select>; 
+                <button class="toggle-btn" onclick="toggleOptional('bookingOptional')">Show Optional Fields ... </button>
+
+                </div>
+                
+                <div id="bookingOptional" class="optional-section" style="display:none;">
+                    <div class="field-group">
+                        <span class="field-label">Special requests:</span>
+                        <textarea id="specialRequests" placeholder="Special Requests" rows="2" style="width: 95%;"></textarea>
+                    </div>
+                    <div class="field-group">
+                        <div class="inline-fields">
+                            <span class="field-label">Room number:</span>
+                            <input type="text" id="roomNumber" placeholder="Room/Table Number">
+                            <label><input type="checkbox" id="isLeaveTimeConfirmed"> Leave time confirmed</label>
+                        </div>
+                    </div>
+                    
+                    <h4>Customer Information (Optional)</h4>
+                    <div class="field-group">
+                        <div class="inline-fields">
+                            <select id="customerTitle">
+                                <option value="">Title</option>
+                                <option value="Mr">Mr</option>
+                                <option value="Mrs">Mrs</option>
+                                <option value="Ms">Ms</option>
+                                <option value="Dr">Dr</option>
+                            </select>
+                            <input type="text" id="firstName" placeholder="First Name">
+                            <input type="text" id="surname" placeholder="Surname">
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <div class="inline-fields">
+                            <input type="email" id="email" placeholder="Email">
+                            <input type="tel" id="mobile" placeholder="Mobile">
+                            <input type="tel" id="phone" placeholder="Landline">
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <div class="inline-fields">
+                            <input type="text" id="mobileCountryCode" placeholder="Mobile Country Code" style="width: 80px;">
+                            <input type="text" id="phoneCountryCode" placeholder="Phone Country Code" style="width: 80px;">
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <label><input type="checkbox" id="receiveEmailMarketing"> Receive email marketing</label>
+                        <label><input type="checkbox" id="receiveSmsMarketing"> Receive SMS marketing</label>
+                    </div>
+                </div>
+                
                 <button onclick="makeBooking()">Make Booking</button>
                 <div id="bookingResult" class="result" style="display:none;"></div>
             </div>
 
             <h3 onclick="showSection('manage')">Manage Booking</h3>
             <div class="section" id="manage">
-                Restaurant name: <input type="text" id="manageName" value="TheHungryUnicorn">
-                <input type="text" id="bookingRef" placeholder="Booking Reference" style="width: 95%;">
-                <button onclick="getBooking()">Check / Update Booking</button>
-                <button onclick="cancelBooking()" style="color: salmon;">Cancel Booking</button>
-                <div id="manageResult" class="result" style="display:none;"></div>
-                <div id="updateFields" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; background-color: white;">
-                    New date and time: <input type="date" id="updateDate" placeholder="New Date">
-                    <input type="time" id="updateTime" placeholder="New Time"> Party size: 
-                    <input type="number" id="updatePartySize" placeholder="New Party Size" min="1" max="20"> <br>
-                    Updated special requests:
-                    <textarea id="updateSpecialRequests" placeholder="New Special Requests" style="width: 95%;"></textarea>
-                    <button onclick="updateBooking()">Update booking information</button>
+                <div class="field-group">
+                    <span class="field-label">Restaurant name:</span>
+                    <input type="text" id="manageName" value="TheHungryUnicorn">
                 </div>
+                <div class="field-group">
+                    <span class="field-label">Booking reference:</span>
+                    <input type="text" id="bookingRef" placeholder="Booking Reference" style="width: 95%;">
+                </div>
+                <button onclick="getBooking()">Get Booking Details</button>
+                <div id="manageResult" class="result" style="display:none;"></div>
+                
+                <div id="updateFields" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; background-color: white;">
+                    <h4>Update Booking (Optional Fields)</h4>
+                    <div class="field-group">
+                        <div class="inline-fields">
+                            <span class="field-label">New date:</span>
+                            <input type="date" id="updateDate">
+                            <span class="field-label">New time:</span>
+                            <input type="time" id="updateTime">
+                            <span class="field-label">Party size:</span>
+                            <input type="number" id="updatePartySize" min="1" max="20">
+                        </div>
+                    </div>
+                    <div class="field-group">
+                        <span class="field-label">Special requests:</span>
+                        <textarea id="updateSpecialRequests" placeholder="Updated Special Requests" style="width: 95%;"></textarea>
+                    </div>
+                    <div class="field-group">
+                        <label><input type="checkbox" id="updateIsLeaveTimeConfirmed"> Leave time confirmed</label>
+                    </div>
+                    <button onclick="updateBooking()">Update Booking</button>
+                </div>
+                
+                <div id="cancelSection" style="display:none; margin: 10px 0; padding: 10px; border: 1px solid #f8d7da; border-radius: 5px; background-color: #f8d7da;">
+                    <h4>Cancel Booking</h4>
+                    <div class="field-group">
+                        <span class="field-label">Microsite name:</span>
+                        <input type="text" id="cancelMicrositeName" value="TheHungryUnicorn">
+                    </div>
+                    <div class="field-group">
+                        <span class="field-label">Cancellation reason:</span>
+                        <select id="cancellationReasonId">
+                            <option value="1">Customer Request</option>
+                            <option value="2">Restaurant Closure</option>
+                            <option value="3">Weather</option>
+                            <option value="4">Emergency</option>
+                            <option value="5">No Show</option>
+                        </select>
+                    </div>
+                    <button onclick="cancelBooking()" style="background: #dc3545;">Cancel Booking</button>
+                </div>
+                
+                <button onclick="showCancelSection()" class="toggle-btn" id="cancelOptionBtn">Show Cancel Options ... </button>
             </div>
         </div>
     </div>
@@ -111,7 +249,7 @@
     <script>
         function showSection(secId) {
             const section = document.getElementById(secId);
-            if (section.style.display != "block") {
+            if (section.style.display == "none") {
                 section.style.display = "block";
             } else {
                 section.style.display = "none";
@@ -120,12 +258,32 @@
 
         const API_BASE = '/api/ConsumerApi/v1/Restaurant';
         const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6ImFwcGVsbGErYXBpQHJlc2RpYXJ5LmNvbSIsIm5iZiI6MTc1NDQzMDgwNSwiZXhwIjoxNzU0NTE3MjA1LCJpYXQiOjE3NTQ0MzA4MDUsImlzcyI6IlNlbGYiLCJhdWQiOiJodHRwczovL2FwaS5yZXNkaWFyeS5jb20ifQ.g3yLsufdk8Fn2094SB3J3XW-KdBc0DY9a2Jiu_56ud8';
-        let userSessionEmail = null;
+        let userSessionEmail = "";
+
+        function toggleOptional(sectionId) {
+            const section = document.getElementById(sectionId);
+            const button = event.target;
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                button.textContent = 'Hide Optional Fields';
+            } else {
+                section.style.display = 'none';
+                button.textContent = 'Show Optional Fields';
+            }
+        }
+
+        function showCancelSection() {
+            const section = document.getElementById('cancelSection');
+            section.style.display = section.style.display === 'none' ? 'block' : 'none';
+            const button = document.getElementById("cancelOptionBtn");
+            button.textContent = section.style.display === 'none' ? 'Show Cancel Options ... ' : 'Hide Cancel Options ... ';
+        }
 
         async function checkAvailability() {
             const name = document.getElementById('availName').value;
             const date = document.getElementById('visitDate').value;
             const partySize = document.getElementById('partySize').value;
+            const channelCode = document.getElementById('availChannelCode').value;
             
             if (!date || !partySize) {
                 showResult('availabilityResult', 'Please fill in all fields', 'error');
@@ -135,7 +293,7 @@
             const formData = new FormData();
             formData.append('VisitDate', date);
             formData.append('PartySize', partySize);
-            formData.append('ChannelCode', 'ONLINE');
+            formData.append('ChannelCode', channelCode);
 
             try {
                 const response = await fetch(`${API_BASE}/${name}/AvailabilitySearch`, {
@@ -162,15 +320,44 @@
         async function makeBooking() {
             const name = document.getElementById('bookingName').value;
             const formData = new FormData();
+            
+            // Required fields
             formData.append('VisitDate', document.getElementById('bookingDate').value);
             formData.append('VisitTime', document.getElementById('bookingTime').value);
             formData.append('PartySize', document.getElementById('bookingPartySize').value);
-            formData.append('ChannelCode', 'ONLINE');
-            formData.append('Customer[FirstName]', document.getElementById('firstName').value);
-            formData.append('Customer[Surname]', document.getElementById('surname').value);
-            formData.append('Customer[Email]', document.getElementById('email').value);
-            formData.append('Customer[Mobile]', document.getElementById('mobile').value);
-            formData.append('SpecialRequests', document.getElementById('specialRequests').value);
+            formData.append('ChannelCode', document.getElementById('bookingChannelCode').value);
+            
+            // Optional fields
+            const specialRequests = document.getElementById('specialRequests').value;
+            const roomNumber = document.getElementById('roomNumber').value;
+            const isLeaveTimeConfirmed = document.getElementById('isLeaveTimeConfirmed').checked;
+            
+            if (specialRequests) formData.append('SpecialRequests', specialRequests);
+            if (roomNumber) formData.append('RoomNumber', roomNumber);
+            if (isLeaveTimeConfirmed) formData.append('IsLeaveTimeConfirmed', 'true');
+            
+            // Customer information (all optional)
+            const title = document.getElementById('customerTitle').value;
+            const firstName = document.getElementById('firstName').value;
+            const surname = document.getElementById('surname').value;
+            const email = document.getElementById('email').value;
+            const mobile = document.getElementById('mobile').value;
+            const phone = document.getElementById('phone').value;
+            const mobileCountryCode = document.getElementById('mobileCountryCode').value;
+            const phoneCountryCode = document.getElementById('phoneCountryCode').value;
+            const receiveEmailMarketing = document.getElementById('receiveEmailMarketing').checked;
+            const receiveSmsMarketing = document.getElementById('receiveSmsMarketing').checked;
+            
+            if (title) formData.append('Customer[Title]', title);
+            if (firstName) formData.append('Customer[FirstName]', firstName);
+            if (surname) formData.append('Customer[Surname]', surname);
+            if (email) formData.append('Customer[Email]', email);
+            if (mobile) formData.append('Customer[Mobile]', mobile);
+            if (phone) formData.append('Customer[Phone]', phone);
+            if (mobileCountryCode) formData.append('Customer[MobileCountryCode]', mobileCountryCode);
+            if (phoneCountryCode) formData.append('Customer[PhoneCountryCode]', phoneCountryCode);
+            if (receiveEmailMarketing) formData.append('Customer[ReceiveEmailMarketing]', 'true');
+            if (receiveSmsMarketing) formData.append('Customer[ReceiveSmsMarketing]', 'true');
 
             try {
                 const response = await fetch(`${API_BASE}/${name}/BookingWithStripeToken`, {
@@ -241,11 +428,13 @@
             const newTime = document.getElementById('updateTime').value;
             const newPartySize = document.getElementById('updatePartySize').value;
             const newSpecialRequests = document.getElementById('updateSpecialRequests').value;
+            const isLeaveTimeConfirmed = document.getElementById('updateIsLeaveTimeConfirmed').checked;
 
             if (newDate) formData.append('VisitDate', newDate);
             if (newTime) formData.append('VisitTime', newTime);
             if (newPartySize) formData.append('PartySize', newPartySize);
             if (newSpecialRequests) formData.append('SpecialRequests', newSpecialRequests);
+            if (isLeaveTimeConfirmed) formData.append('IsLeaveTimeConfirmed', 'true');
 
             try {
                 const response = await fetch(`${API_BASE}/${name}/Booking/${ref}`, {
@@ -269,15 +458,18 @@
         async function cancelBooking() {
             const name = document.getElementById('manageName').value;
             const ref = document.getElementById('bookingRef').value;
+            const micrositeName = document.getElementById('cancelMicrositeName').value;
+            const cancellationReasonId = document.getElementById('cancellationReasonId').value;
+            
             if (!ref) {
                 showResult('manageResult', 'Please enter booking reference', 'error');
                 return;
             }
 
             const formData = new FormData();
-            formData.append('micrositeName', 'TheHungryUnicorn');
+            formData.append('micrositeName', micrositeName);
             formData.append('bookingReference', ref);
-            formData.append('cancellationReasonId', '1');
+            formData.append('cancellationReasonId', cancellationReasonId);
 
             try {
                 const response = await fetch(`${API_BASE}/${name}/Booking/${ref}/Cancel`, {
@@ -318,7 +510,9 @@
                 showEmailError('Please enter a valid email address');
                 return;
             }
-            
+            if (userSessionEmail != "" && userSessionEmail != email) {
+                resetChat();
+            }
             userSessionEmail = email;
             sessionStorage.setItem('userEmail', email);
             document.getElementById('login').innerText = "Login as: "+ email;
@@ -337,12 +531,17 @@
             errorDiv.style.display = 'block';
         }
 
+        function writeMessage(message) {
+            document.getElementById("chatInput").value = message;
+            sendMessage();
+        }
+
         // Chat functionality
         function addMessage(message, isUser = false) {
             const chatMessages = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
-            messageDiv.textContent = message;
+            messageDiv.innerHTML = message;
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
@@ -373,17 +572,32 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ message: message })
+                    body: JSON.stringify({ message: message, email: userSessionEmail })
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
                     return data.response;
                 } else {
-                    return 'Sorry, I\'m having trouble processing your request. Please try again.';
+                    const errorData = await response.json();
+                    return `Sorry, I'm having trouble processing your request: ${errorData.detail || 'Please try again.'}`;
                 }
             } catch (error) {
+                console.error('Chat error:', error);
                 return 'Sorry, I\'m currently unavailable. Please try again later.';
+            }
+        }
+
+        async function resetChat() {
+            try {
+                await fetch('/api/ai/reset', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: userSessionEmail })
+                });
+                document.getElementById('chatMessages').innerHTML = '<div class="message bot-message">Hello! I\'m your restaurant booking assistant. I can help you check availability, make bookings, or manage existing reservations. What would you like to do?</div>';
+            } catch (error) {
+                console.error('Reset error:', error);
             }
         }
     </script>
