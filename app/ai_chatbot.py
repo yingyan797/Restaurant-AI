@@ -8,7 +8,7 @@ import re # Import the regex module for stripping markdown
 import copy
 
 # Set up Google API key - Replace with your actual key or secure loading
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAnKWcDA8jjl_Rgf1gJcdm_UBNB2UzWHXo"
+os.environ["GOOGLE_API_KEY"] = ""
 
 # Add the directory containing ai_tools.py to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))

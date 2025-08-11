@@ -341,3 +341,12 @@ The API now includes full CRUD operations with SQLite:
 - **Auto-reload**: Development server watches for code changes
 - **CORS**: Enabled for cross-origin requests
 - **Validation**: Request validation with helpful error messages
+
+# AI integration
+- Framework: LangGraph
+## Features
+- Assist users in finding their booking reference and restaurant names when using the booking form
+- All booking and availablility functions are designed with AI, but some have problem running
+- Simulate user sign in with an email, to prevent accessing private information of others
+## Usage
+- Put a google gemini API key in .env: "gemapi=..."
