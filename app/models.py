@@ -94,7 +94,6 @@ class Customer(Base):
     # Relationships
     bookings = relationship("Booking", back_populates="customer")
 
-
 class Booking(Base):
     """
     Booking model representing restaurant reservations.
