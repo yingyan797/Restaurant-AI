@@ -45,7 +45,8 @@ prompt = ChatPromptTemplate.from_messages(
 When responding, use the available tools to fulfill user requests. Here's how:
 
 1. Prioritize Tool Usage: If a user's request can be directly addressed by one of your tools, propose or call that tool.
-2. Conversational Fallback: If a request does not fit any tool, respond conversationally and offer alternative help."""
+2. If any required parameter cannot be recognized, still suggest this tool, but use empty string or None as arguments
+3. Conversational Fallback: If a request does not fit any tool, respond conversationally and offer alternative help."""
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -66,7 +67,7 @@ chain = prompt | model_with_tools
 # Define the AgentState - using 'messages' for LangGraph's checkpointer
 class AgentState(TypedDict):
     messages: List[BaseMessage] # This will store the chat history
-    current_task: Optional[str] # e.g., 'list_restaurants', 'search_availability', 'create_booking', 'find_customer_bookings', 'update_booking_details', 'cancel_booking'
+    current_task: Optional[str] # e.g., 'list_restaurants_tool', 'search_availability_tool', 'create_booking_tool', 'find_customer_bookings_tool', 'update_booking_details_tool', 'cancel_booking_tool'
     sub_task_state: Optional[str] # For multi-step tasks: 'awaiting_selection', 'awaiting_details', 'awaiting_cancellation_reason', 'awaiting_confirmation'
     tool_parameters: Dict[str, Any] # Parameters collected for the current task
     customer_email: Optional[str] # Store customer email for repeated use
@@ -88,7 +89,6 @@ class HTMLTableCreator:
         tr = "<tr>"
         for entry in row_data:
             tr += "<td>"+str(entry)+"</td>"
-        tr += "</tr>"
         self.tbody += tr
     def from_dict(self, content:dict):
         # Creates a two-column table from a dictionary (Key | Value)
@@ -100,7 +100,7 @@ class HTMLTableCreator:
 
 # Helper function to get missing parameters for a tool
 def get_missing_parameters(tool_name: str, collected_params: Dict[str, Any]) -> List[str]:
-    logging.debug(f"Checking missing parameters for tool: {tool_name} with collected: {collected_params}")
+    logging.debug(f"Checking missing parameters for: {tool_name} with collected: {collected_params}")
     func = next((t.func for t in all_ai_tools if t.name == tool_name), None)
     if not func:
         logging.warning(f"Tool function not found for '{tool_name}'.")
@@ -112,10 +112,18 @@ def get_missing_parameters(tool_name: str, collected_params: Dict[str, Any]) -> 
         if param_name == 'self':
             continue
         
+        # Check if the parameter is required (no default value) and not yet collected
         if param_info.default == inspect.Parameter.empty and param_name not in collected_params:
-            if tool_name == "create_booking" and param_name.startswith("customer_") and param_name not in ["customer_email", "customer_first_name", "customer_surname", "customer_mobile"]:
+            # Specific exclusion for certain customer_ fields in create_booking_tool if not explicitly needed
+            if tool_name == "create_booking_tool" and param_name.startswith("customer_") and param_name not in ["customer_email", "customer_first_name", "customer_surname", "customer_mobile"]:
                 continue
-
+            # customer_email is specifically handled for find_customer_bookings_tool earlier, so it's not always "missing" in the traditional sense here
+            if tool_name == "find_customer_bookings_tool" and param_name == "customer_email":
+                 # We handle email collection separately in agent_node
+                 if not collected_params.get("customer_email"): # Only deem missing if not in collected params
+                    missing_params.append(param_name)
+                 continue
+            
             missing_params.append(param_name)
     logging.debug(f"Missing parameters for {tool_name}: {missing_params}")
     return missing_params
@@ -172,10 +180,10 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
             return state
 
     # --- Logic for handling booking selection (for update/cancel) ---
-    if current_task in ["update_booking_details", "cancel_booking"] and sub_task_state == "awaiting_selection":
+    if current_task in ["update_booking_details_tool", "cancel_booking_tool"] and sub_task_state == "awaiting_selection":
         logging.info(f"Agent is in 'awaiting_selection' state for {current_task}. User input: '{user_input}'")
         if bookings_found:
-            num_match = re.search(r"\b\d+\b", user_input)
+            num_match = re.search(r"\b\d+", user_input)
             if num_match:
                 try:
                     selected_index = int(num_match.group()) - 1
@@ -187,9 +195,9 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
                         tool_parameters["booking_reference"] = selected_booking["booking_reference"]
                         state["booking_to_modify"] = selected_booking
                         
-                        if current_task == "cancel_booking":
+                        if current_task == "cancel_booking_tool":
                             state["sub_task_state"] = "awaiting_cancellation_reason"
-                            cancellation_reasons = AIToolCallingInterface.list_cancellation_reasons()
+                            cancellation_reasons = AIToolCallingInterface.list_cancellation_reasons_tool()
                             columns = ["Reason ID", "Title", "Description"]
                             reason_html = HTMLTableCreator(columns)
                             for r in cancellation_reasons:
@@ -197,7 +205,7 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
                             
                             messages.append(AIMessage(content=f"<p>You've selected booking <b>{selected_booking['booking_reference']}</b> for <i>{selected_booking['restaurant_name']}</i>. Please provide the ID of the cancellation reason from the following table: </p>"+reason_html.html()))
                             logging.info(f"Selected booking {selected_booking['booking_reference']} for cancellation. Transitioning to 'awaiting_cancellation_reason'.")
-                        elif current_task == "update_booking_details":
+                        elif current_task == "update_booking_details_tool":
                             state["sub_task_state"] = "awaiting_details"
                             messages.append(AIMessage(content=f"<p>You've selected booking <b>{selected_booking['booking_reference']}</b> for <i>{selected_booking['restaurant_name']}</i>. What details would you like to update (e.g., VisitDate, VisitTime, PartySize, SpecialRequests)?</p>"))
                             logging.info(f"Selected booking {selected_booking['booking_reference']} for update. Transitioning to 'awaiting_details'.")
@@ -216,7 +224,7 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
                 return state
 
     # --- Logic for collecting cancellation reason ID ---
-    if current_task == "cancel_booking" and sub_task_state == "awaiting_cancellation_reason":
+    if current_task == "cancel_booking_tool" and sub_task_state == "awaiting_cancellation_reason":
         logging.info(f"Agent in 'awaiting_cancellation_reason'. User input: '{user_input}'")
         try:
             reason_id_match = re.search(r'\b\d+', user_input)
@@ -239,13 +247,14 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
             return state
 
     # --- Logic for collecting update details ---
-    if current_task == "update_booking_details" and sub_task_state == "awaiting_details":
-        logging.info(f"Agent in 'awaiting_details' for update_booking_details. User input: '{user_input}')")
+    if current_task == "update_booking_details_tool" and sub_task_state == "awaiting_details":
+        logging.info(f"Agent in 'awaiting_details' for update_booking_details_tool. User input: '{user_input}')")
         response = chain.invoke({"messages": messages}) # Use the new chain here
         
         if response.tool_calls and response.tool_calls[0]['name'] == current_task:
             new_params = response.tool_calls[0]['args']
             
+            # Remove parameters that are part of the booking identity, not for update
             for old_param in ["restaurant_name", "booking_reference"]:
                 if old_param in new_params:
                     new_params.pop(old_param)
@@ -253,7 +262,7 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
             if new_params:
                 tool_parameters.update(new_params)
                 state["tool_parameters"] = tool_parameters
-                messages.append(response)
+                messages.append(response) # Append the AI's response with tool_calls for context
                 
                 messages.append(AIMessage(content=f"<p>Confirm you wish to update booking <b>{selected_booking_ref}</b> for <i>{selected_restaurant_name}</i> with the following changes: </p>{HTMLTableCreator().from_dict(new_params)}"))
                 state["sub_task_state"] = "awaiting_confirmation"
@@ -269,17 +278,33 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
             return state
 
     # --- Initial intent detection and then parameter collection for new tasks ---
-    if current_task is None or (current_task not in ["update_booking_details", "cancel_booking"] and not tool_parameters):
-        logging.info("No current task or initial task detection. Invoking model for intent.")
-        # Include customer email in context
-        context = {"messages": messages}
+    # This block is for:
+    # 1. Initial conversation start (current_task is None).
+    # 2. When an update/cancel flow has been initiated, but bookings haven't been found/selected yet.
+    # 3. When an ongoing task (not in a specific sub-state) needs more parameters from the LLM.
+    
+    should_invoke_llm_for_intent_or_params = False
+    if current_task is None: 
+        should_invoke_llm_for_intent_or_params = True
+    elif current_task in ["update_booking_details_tool", "cancel_booking_tool"] and not (state.get("bookings_found") and state.get("selected_booking_ref")):
+        # If we are in update/cancel flow, but haven't found/selected a booking yet,
+        # we still need LLM to re-evaluate intent or extract potential email.
+        should_invoke_llm_for_intent_or_params = True
+    elif current_task is not None and sub_task_state is None:
+        # This covers cases where an ongoing task needs more parameters from the LLM
+        # (e.g., after initial tool suggestion, collecting other required fields)
+        should_invoke_llm_for_intent_or_params = True
+
+
+    if should_invoke_llm_for_intent_or_params:
+        logging.info("Invoking model for intent or general parameter collection.")
+        
+        # Add customer email to messages for LLM context if available in state
+        context_messages = list(messages) # Create a copy to modify for context
         if state.get("customer_email"):
-            enhanced_messages = [AIMessage(content=f"Customer email available: {state['customer_email']}")]
-            enhanced_messages.extend(messages)
-            context["messages"] = enhanced_messages
-        else:
-            raise ValueError("No email found")
-        response = chain.invoke(context)
+            context_messages.insert(0, AIMessage(content=f"Customer email in context: {state['customer_email']}."))
+        
+        response = chain.invoke({"messages": context_messages})
         
         if response.tool_calls:
             tool_call = response.tool_calls[0]
@@ -287,55 +312,87 @@ def agent_node(state: AgentState) -> Dict[str, Any]:
             params = tool_call['args']
             logging.info(f"Model suggested tool call: {tool_name} with params: {params}")
             
-            state["current_task"] = tool_name
-            state["tool_parameters"] = params
-            messages.append(response)
-            
-            missing = get_missing_parameters(tool_name, params)
-            if missing:
-                columns = ["Parameter"]
-                missing_html = HTMLTableCreator(columns)
-                for m in missing:
-                    missing_html.add_row([m])
-                messages.append(AIMessage(content=f"<p>I need more information to <i>{tool_name}</i>. Could you please provide the following:</p> {missing_html.html()}"))
-                logging.info(f"Missing parameters found: {missing}. Staying in agent to collect.")
-                return state
-            else:
-                logging.info("All parameters collected for new task. Ready for tool call.")
-                return state
-        else:
-            messages.append(response)
-            logging.info("Model did not suggest a tool call. Conversational response.")
-            return state
+            # Persist customer email if extracted by LLM in this call
+            if params.get("customer_email") and not state.get("customer_email"):
+                state["customer_email"] = params["customer_email"]
+                logging.info(f"Customer email '{state['customer_email']}' extracted by LLM and persisted.")
 
-    # If current_task is set, and we are not in special sub-states (like awaiting_confirmation),
-    # try to collect remaining parameters from user input for the ongoing task.
-    if current_task is not None and sub_task_state is None:
-        logging.info(f"Current task {current_task} active, no sub-state. Invoking model for parameter collection.")
-        response = chain.invoke({"messages": messages}) # Use the new chain here
-        
-        if response.tool_calls and response.tool_calls[0]['name'] == current_task:
-            new_params = response.tool_calls[0]['args']
-            if new_params:
-                tool_parameters.update(new_params) 
-                state["tool_parameters"] = tool_parameters
-            messages.append(response)
+            # --- Core Logic for Redirection / Task Setting ---
+            if tool_name in ["update_booking_details_tool", "cancel_booking_tool"]:
+                # If these tools are suggested but we don't have booking_reference and restaurant_name yet,
+                # we need to first find bookings.
+                if not (params.get("booking_reference") and params.get("restaurant_name")):
+                    logging.info(f"LLM suggested '{tool_name}' but missing booking_reference/restaurant_name. Redirecting to 'find_customer_bookings_tool'.")
+                    
+                    state["tool_parameters"] = {"original_task_after_find_bookings": tool_name} # Reset params, only keep original task
+                    state["current_task"] = "find_customer_bookings_tool"
+                    state["tool_parameters"]["customer_email"] = state["customer_email"] # Pass known email to tool params
+                    messages.append(response) # Append original LLM message with tool call
+                    return state # Ready for call_tool via router
+
+                else: # LLM provided all details for update/cancel (unlikely for initial user query, but possible)
+                    logging.info(f"LLM suggested '{tool_name}' with full parameters. Proceeding directly.")
+                    state["current_task"] = tool_name
+                    state["tool_parameters"] = params
+                    messages.append(response) # Append LLM's tool call message
+                    # Now check for any *other* missing parameters specific to update/cancel (e.g., new date for update)
+                    missing = get_missing_parameters(tool_name, params)
+                    if missing:
+                        columns = ["Parameter"]
+                        missing_html = HTMLTableCreator(columns)
+                        for m in missing:
+                            missing_html.add_row([m])
+                        messages.append(AIMessage(content=f"<p>I need more information for your <i>{tool_name}</i> request. Please provide:</p>{missing_html.html()}"))
+                        logging.info(f"Still missing parameters for {tool_name}: {missing}. Staying in agent.")
+                        return state
+                    else:
+                        logging.info(f"All parameters collected for {tool_name}. Transitioning to awaiting_confirmation.")
+                        state["sub_task_state"] = "awaiting_confirmation"
+                        # Generate confirmation message based on tool
+                        if tool_name == "cancel_booking_tool":
+                            messages.append(AIMessage(content=f"<p>Are you sure you want to cancel booking <b>{params['booking_reference']}</b> for <i>{params['restaurant_name']}</i>? Please confirm.</p>"))
+                        elif tool_name == "update_booking_details_tool":
+                            update_info = {k: v for k, v in params.items() if k not in ["restaurant_name", "booking_reference"]}
+                            messages.append(AIMessage(content=f"<p>Confirm you wish to update booking <b>{params['booking_reference']}</b> for <i>{params['restaurant_name']}</i> with the following changes: </p>{HTMLTableCreator().from_dict(update_info)}"))
+                        return state
             
-            missing = get_missing_parameters(current_task, tool_parameters)
-            if missing:
-                columns = ["Parameter"]
-                missing_html = HTMLTableCreator(columns)
-                for m in missing:
-                    missing_html.add_row([m])
-                messages.append(AIMessage(content=f"<p>I still need more information for your <i>{current_task}</i> request. Please provide:</p>{missing_html.html()}"))
-                logging.info(f"Still missing parameters for {current_task}: {missing}. Staying in agent.")
-                return state
-            else:
-                logging.info(f"All parameters collected for {current_task}. Ready for tool call.")
-                return state
-        else:
-            messages.append(response)
-            logging.info(f"Model didn't complete tool call for {current_task}, replied conversationally. Staying in agent.")
+            else: # Any other tool (list_restaurants_tool, search_availability_tool, create_booking_tool)
+                state["current_task"] = tool_name
+                state["tool_parameters"] = params
+                messages.append(response) # Append LLM's tool call message
+                
+                missing = get_missing_parameters(tool_name, params)
+                if missing:
+                    columns = ["Parameter"]
+                    missing_html = HTMLTableCreator(columns)
+                    for m in missing:
+                        missing_html.add_row([m])
+                    messages.append(AIMessage(content=f"<p>I need more information to <i>{tool_name}</i>. Could you please provide the following:</p> {missing_html.html()}"))
+                    logging.info(f"Missing parameters found: {missing}. Staying in agent to collect.")
+                    return state
+                else:
+                    logging.info(f"All parameters collected for new task {tool_name}. Ready for tool call.")
+                    if tool_name == "create_booking_tool":
+                        state["sub_task_state"] = "awaiting_confirmation"
+                        messages.append(AIMessage(content=f"<p>Confirm you wish to create a booking for <i>{params.get('restaurant_name', 'the restaurant')}</i> on {params.get('VisitDate')} at {params.get('VisitTime')} for {params.get('PartySize')} people? Please confirm.</p>"))
+                    return state
+        else: # LLM did not suggest a tool call (conversational response)
+            messages.append(response) # Append LLM's conversational response
+            logging.info("Model did not suggest a tool call. Conversational response.")
+            
+            # --- NEW LOGIC TO INITIATE BOOKING MANAGEMENT FLOW IF LLM CONVERSATIONAL ---
+            user_input_lower = user_input.lower()
+            if any(kw in user_input_lower for kw in ["update my booking", "change my booking", "cancel my booking", "cancel my reservation", "change my reservation"]):
+                # Set current task immediately to find_customer_bookings_tool
+                state["current_task"] = "find_customer_bookings_tool"
+                # Store the original intent for after bookings are found
+                original_task = "update_booking_details_tool" if any(kw in user_input_lower for kw in ["update", "change"]) else "cancel_booking_tool"
+                state["tool_parameters"]["original_task_after_find_bookings"] = original_task
+                # If email is known, we have all parameters for find_customer_bookings_tool.
+                # The route_agent_action will then send it to call_tool.
+                state["tool_parameters"]["customer_email"] = state["customer_email"]
+                logging.info("User wants to update/cancel. Email known. Setting current_task to find_customer_bookings_tool. Ready for call_tool.")
+            # --- END NEW LOGIC ---
             return state
 
     logging.warning("Agent node reached end without explicit return. This should not happen frequently.")
@@ -359,6 +416,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
     else:
         try:
             invoke_params = tool_parameters.copy() 
+            # Type conversion for date/time objects for tool invocation
             for param, value in invoke_params.items():
                 if param == "VisitDate" and isinstance(value, str):
                     try:
@@ -391,12 +449,14 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
+                # Find the tool call that corresponds to the current task
                 if tc['name'] == current_task:
                     tool_call_id = tc['id']
                     break
             if tool_call_id:
                 break
     
+    # Append the ToolMessage containing the output of the tool execution
     messages.append(ToolMessage(content=str(tool_output), tool_call_id=tool_call_id))
     logging.debug(f"ToolMessage added: {str(tool_output)[:100]}...")
 
@@ -404,7 +464,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
     # This section determines what message to send to the user and how to update state
     # BEFORE routing to the next node.
 
-    if current_task == "find_customer_bookings" and not isinstance(tool_output, str) and "error" not in str(tool_output) and tool_output != "No results found.":
+    if current_task == "find_customer_bookings_tool" and not isinstance(tool_output, str) and "error" not in str(tool_output) and tool_output != "No results found.":
         bookings = tool_output
         state["bookings_found"] = bookings
         if bookings:
@@ -415,7 +475,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
                 bookings_html.add_row(row_data)
             
             original_task_after_find = state["tool_parameters"].pop("original_task_after_find_bookings", None)
-            if original_task_after_find in ["update_booking_details", "cancel_booking"]:
+            if original_task_after_find in ["update_booking_details_tool", "cancel_booking_tool"]:
                 state["current_task"] = original_task_after_find
                 state["sub_task_state"] = "awaiting_selection"
                 messages.append(AIMessage(content="<p>I found the following bookings for you:</p>" + bookings_html.html() + "<p>Please tell me which booking you'd like to update/cancel by its number (e.g., '1' for the first one).</p>"))
@@ -442,7 +502,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
             state["booking_to_modify"] = None
             logging.info("Find customer bookings: No bookings found. Task completed, state reset.")
 
-    elif current_task == "list_restaurants" and isinstance(tool_output, list) and not isinstance(tool_output, str):
+    elif current_task == "list_restaurants_tool" and isinstance(tool_output, list) and not isinstance(tool_output, str):
         if tool_output:
             columns = [key.replace("restaurant_", "").replace("_", " ").title() for key in tool_output[0].keys()] if tool_output else ["Restaurant Details"]
             restaurants_html = HTMLTableCreator(columns)
@@ -462,7 +522,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
         state["selected_restaurant_name"] = None
         state["booking_to_modify"] = None
 
-    elif current_task == "search_availability" and isinstance(tool_output, dict) and "results" in tool_output:
+    elif current_task == "search_availability_tool" and isinstance(tool_output, dict) and "results" in tool_output:
         availabilities = tool_output["results"]
         if availabilities:
             columns = [key.replace("_", " ").title() for key in availabilities[0].keys()] if availabilities else ["Availability Details"]
@@ -483,7 +543,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
         state["selected_restaurant_name"] = None
         state["booking_to_modify"] = None
 
-    elif current_task == "create_booking" and isinstance(tool_output, dict) and "booking_reference" in tool_output:
+    elif current_task == "create_booking_tool" and isinstance(tool_output, dict) and "booking_reference" in tool_output:
         booking_ref = tool_output.get("booking_reference", "N/A")
         restaurant_name = tool_parameters.get("restaurant_name", "the restaurant")
         messages.append(AIMessage(content=f"<p>Booking successfully created for <i>{restaurant_name}</i> with reference <b>{booking_ref}</b>.</p>"))
@@ -496,7 +556,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
         state["selected_restaurant_name"] = None
         state["booking_to_modify"] = None
 
-    elif current_task == "cancel_booking" and isinstance(tool_output, dict) and tool_output.get("status") == "success":
+    elif current_task == "cancel_booking_tool" and isinstance(tool_output, dict) and tool_output.get("status") == "success":
         booking_ref = tool_parameters.get("booking_reference", "the booking")
         restaurant_name = tool_parameters.get("restaurant_name", "the restaurant")
         messages.append(AIMessage(content=f"<p>Booking <b>{booking_ref}</b> for <i>{restaurant_name}</i> has been successfully cancelled.</p>"))
@@ -509,7 +569,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
         state["selected_restaurant_name"] = None
         state["booking_to_modify"] = None
 
-    elif current_task == "update_booking_details" and isinstance(tool_output, dict) and tool_output.get("status") == "success":
+    elif current_task == "update_booking_details_tool" and isinstance(tool_output, dict) and tool_output.get("status") == "success":
         booking_ref = tool_parameters.get("booking_reference", "the booking")
         restaurant_name = tool_parameters.get("restaurant_name", "the restaurant")
         messages.append(AIMessage(content=f"<p>Booking <b>{booking_ref}</b> for <i>{restaurant_name}</i> has been successfully updated.</p>"))
@@ -523,6 +583,7 @@ def call_tool(state: AgentState) -> Dict[str, Any]:
         state["booking_to_modify"] = None
 
     else:
+        # Generic error or unexpected tool output handling
         messages.append(AIMessage(content=f"<p>The {current_task} operation completed with result: {tool_output}</p>"))
         logging.info(f"Generic tool completion for {current_task}. State reset.")
         state["current_task"] = None
@@ -574,16 +635,18 @@ def route_agent_action(state: AgentState):
         
         # If the LLM's suggested tool aligns with the current task or is initiating a new one
         if state.get("current_task") == tool_name_from_llm or state.get("current_task") is None:
+            # Check if all required parameters for the *current_task* (which might be find_customer_bookings_tool) are available
             missing = get_missing_parameters(task_for_param_check, state.get("tool_parameters", {}))
             
-            if not missing and state.get("sub_task_state") is None:
-                logging.info(f"Routing: Tool call suggested, all params collected, no sub-state -> call_tool ({tool_name_from_llm})")
+            if not missing and state.get("sub_task_state") is None: # No missing params and not in a multi-step sub-state
+                logging.info(f"Routing: Tool call suggested, all params collected, no sub-state -> call_tool ({tool_name_from_llm if state.get('current_task') is None else state.get('current_task')})")
                 return "call_tool"
             else:
                 logging.info(f"Routing: Tool call suggested, but missing params ({missing}) or in sub-state ({state.get('sub_task_state')}) -> agent")
                 return "agent"
         else:
             # This is an unexpected scenario where LLM suggested a tool different from current_task.
+            # E.g., current_task is find_customer_bookings_tool, but LLM suggested create_booking_tool.
             # Log and route back to agent for re-evaluation.
             logging.warning(f"Routing: LLM suggested tool '{tool_name_from_llm}' but current_task is '{state.get('current_task')}'. Routing back to agent.")
             return "agent"
@@ -591,9 +654,11 @@ def route_agent_action(state: AgentState):
     # 3. If the last message from the AI is a conversational response (no tool calls)
     if isinstance(last_message, AIMessage) and not last_message.tool_calls:
         # If there's an ongoing task that explicitly requires more conversational input (like selecting a booking,
-        # or specifying update details, or cancellation reason)
-        if state.get("current_task") is not None and state.get("sub_task_state") in ["awaiting_selection", "awaiting_details", "awaiting_cancellation_reason"]:
-            logging.info(f"Routing: Conversational AI response, ongoing task {state.get('current_task')} in sub-state {state.get('sub_task_state')} -> agent")
+        # or specifying update details, or cancellation reason, or *providing email for find_customer_bookings_tool*)
+        if state.get("current_task") is not None and \
+           (state.get("sub_task_state") in ["awaiting_selection", "awaiting_details", "awaiting_cancellation_reason"] or \
+           (state.get("current_task") == "find_customer_bookings_tool" and not state.get("customer_email") and not state.get("bookings_found"))): # Added condition for find_customer_bookings_tool when email is still needed
+            logging.info(f"Routing: Conversational AI response, ongoing task {state.get('current_task')} in sub-state {state.get('sub_task_state')} or awaiting email -> agent")
             return "agent"
         else:
             # If no active task or specific multi-step sub-state needing continuation, the turn is complete.
@@ -601,9 +666,6 @@ def route_agent_action(state: AgentState):
             return END
 
     # 4. Fallback for other cases (e.g., initial HumanMessage, or if agent_node somehow didn't produce an AIMessage)
-    # If the current task is None, we need the agent to figure out the intent.
-    # If a HumanMessage just came in, and agent_node has not yet processed it into an AIMessage
-    # (though in this graph, agent_node always adds an AIMessage before returning)
     logging.info("Routing: Fallback to agent (e.g., initial human input, or state not fitting above conditions).")
     return "agent"
 
@@ -661,4 +723,50 @@ initial_agent_state = {
 }
 
 if __name__ == "__main__":
-    all_ai_tools
+    # Example usage:
+    # Set an initial customer email for testing existing booking flows
+    thread_id = "test-thread-123"
+    
+    # Example 1: User wants to cancel a booking without providing details
+    # This should trigger find_customer_bookings_tool first.
+    state_with_email = initial_agent_state.copy()
+    state_with_email["customer_email"] = "testuser@example.com"
+
+    print("\n--- Example 1: User wants to cancel a booking (email known) ---")
+    inputs = {"messages": [HumanMessage(content="I want to cancel my booking")]}
+    for s in app.stream(inputs, {"configurable": {"thread_id": thread_id, "thread_state": state_with_email}}):
+        if "__end__" not in s:
+            print(s)
+    
+    # Example 2: User wants to cancel a booking (email unknown)
+    print("\n--- Example 2: User wants to cancel a booking (email unknown) ---")
+    new_thread_id = "test-thread-456" # Use a new thread for fresh state
+    inputs_no_email = {"messages": [HumanMessage(content="I want to cancel a reservation.")]}
+    for s in app.stream(inputs_no_email, {"configurable": {"thread_id": new_thread_id, "thread_state": initial_agent_state}}):
+        if "__end__" not in s:
+            print(s)
+    
+    # Follow up for Example 2: Provide email
+    print("\n--- Example 2 follow-up: Providing email ---")
+    inputs_provide_email = {"messages": [HumanMessage(content="My email is john.doe@example.com")]}
+    for s in app.stream(inputs_provide_email, {"configurable": {"thread_id": new_thread_id}}):
+        if "__end__" not in s:
+            print(s)
+    
+    # Example 3: User wants to update a booking (email known)
+    print("\n--- Example 3: User wants to update a booking (email known) ---")
+    thread_id_update = "test-thread-update-1"
+    state_with_email_update = initial_agent_state.copy()
+    state_with_email_update["customer_email"] = "updateuser@example.com"
+    inputs_update = {"messages": [HumanMessage(content="I need to change my reservation.")]}
+    for s in app.stream(inputs_update, {"configurable": {"thread_id": thread_id_update, "thread_state": state_with_email_update}}):
+        if "__end__" not in s:
+            print(s)
+
+    # Example 4: User wants to list restaurants
+    print("\n--- Example 4: User wants to list restaurants ---")
+    thread_id_list = "test-thread-list-1"
+    inputs_list = {"messages": [HumanMessage(content="List all restaurants.")]}
+    for s in app.stream(inputs_list, {"configurable": {"thread_id": thread_id_list, "thread_state": initial_agent_state}}):
+        if "__end__" not in s:
+            print(s)

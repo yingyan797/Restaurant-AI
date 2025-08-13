@@ -23,6 +23,23 @@ def _serialize_value(value):
         return value.isoformat()
     return value
 
+# Helper to run async functions from a sync context
+def run_async_in_sync(coro):
+    """
+    Runs an async coroutine in a synchronous context.
+    If an event loop is already running, it executes the coroutine in a new thread.
+    Otherwise, it runs it in the current thread.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        # If an event loop is already running, run the coroutine in a new thread
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
+    except RuntimeError:
+        # No event loop running, safe to use asyncio.run in the current thread
+        return asyncio.run(coro)
+
 # --- Helper for Database Session Management ---
 def get_db_session() -> Optional[Session]:
     """Helper to get a database session. Used by tool wrappers."""
@@ -53,7 +70,7 @@ class AIToolCallingInterface:
         finally: db.close()
 
     @tool
-    def list_restaurants():
+    def list_restaurants_tool():
         """
         Lists all available restaurants registered in the system.
         This tool does not take any parameters and returns a comprehensive list of all restaurants.
@@ -70,7 +87,7 @@ class AIToolCallingInterface:
         finally: db.close()
 
     @tool
-    def list_cancellation_reasons():
+    def list_cancellation_reasons_tool():
         """
         Retrieves all predefined cancellation reasons with their ID, title, and description.
         This is useful when a user wishes to cancel a booking and needs to specify a reason ID.
@@ -93,7 +110,7 @@ class AIToolCallingInterface:
         finally: db.close()
 
     @tool
-    def find_customer_bookings(
+    def find_customer_bookings_tool(
             email: str,
             date_range: Optional[List[str]] = None,
             time_range: Optional[List[str]] = None,
@@ -191,22 +208,10 @@ class AIToolCallingInterface:
             detailed_bookings = []
             for booking_ref_tuple in bookings_raw:
                 try:
-                    # Use asyncio.create_task if loop is running, otherwise run_until_complete
-                    try:
-                        loop = asyncio.get_running_loop()
-                        # If we're in an async context, we need to handle this differently
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(
-                                asyncio.run,
-                                get_booking(booking_ref_tuple[1], booking_ref_tuple[0], db, MOCK_BEARER_TOKEN)
-                            )
-                            booking_details = future.result()
-                    except RuntimeError:
-                        # No event loop running, safe to use asyncio.run
-                        booking_details = asyncio.run(
-                            get_booking(booking_ref_tuple[1], booking_ref_tuple[0], db, MOCK_BEARER_TOKEN)
-                        )
+                    # Use the new run_async_in_sync helper
+                    booking_details = run_async_in_sync(
+                        get_booking(booking_ref_tuple[1], booking_ref_tuple[0], db, MOCK_BEARER_TOKEN)
+                    )
                     detailed_bookings.append(booking_details)
                 except Exception as e:
                     logging.warning(f"Error retrieving details for booking {booking_ref_tuple[0]}: {str(e)}")
@@ -224,7 +229,7 @@ class AIToolCallingInterface:
             db.close()
 
     @tool
-    def search_availability(restaurant_name: str, VisitDate: str, PartySize: int, ChannelCode: str = "ONLINE") -> Dict[str, Any]:
+    def search_availability_tool(restaurant_name: str, VisitDate: str, PartySize: int, ChannelCode: str = "ONLINE") -> Dict[str, Any]:
         """
         Searches for available booking slots at a specific restaurant on a given date for a certain party size.
 
@@ -240,14 +245,17 @@ class AIToolCallingInterface:
         db = get_db_session()
         if not db: return {"error": "Database connection error."}
         try:
-            result = availability_search(restaurant_name, date.fromisoformat(VisitDate), PartySize, ChannelCode, db, MOCK_BEARER_TOKEN)
+            # CORRECTED: Use run_async_in_sync to call the async availability_search
+            result = run_async_in_sync(
+                availability_search(restaurant_name, date.fromisoformat(VisitDate), PartySize, ChannelCode, db, MOCK_BEARER_TOKEN)
+            )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
     @tool
-    def create_booking(
+    def create_booking_tool(
         restaurant_name: str, VisitDate: str, VisitTime: str, PartySize: int,
         customer_email: str, customer_first_name: str, customer_surname: str, customer_mobile: str,
         ChannelCode: str = "ONLINE", SpecialRequests: Optional[str] = None,
@@ -294,21 +302,24 @@ class AIToolCallingInterface:
         db = get_db_session()
         if not db: return {"error": "Database connection error."}
         try:
-            result = create_booking_with_stripe(
-                restaurant_name=restaurant_name, VisitDate=date.fromisoformat(VisitDate), VisitTime=time.fromisoformat(VisitTime),
-                PartySize=PartySize, ChannelCode=ChannelCode, SpecialRequests=SpecialRequests,
-                IsLeaveTimeConfirmed=IsLeaveTimeConfirmed, RoomNumber=RoomNumber,
-                Title=customer_title, FirstName=customer_first_name, Surname=customer_surname,
-                MobileCountryCode=customer_mobile_country_code, Mobile=customer_mobile,
-                PhoneCountryCode=customer_phone_country_code, Phone=customer_phone, Email=customer_email,
-                ReceiveEmailMarketing=customer_receive_email_marketing, ReceiveSmsMarketing=customer_receive_sms_marketing,
-                GroupEmailMarketingOptInText=customer_group_email_marketing_opt_in_text,
-                GroupSmsMarketingOptInText=customer_group_sms_marketing_opt_in_text,
-                ReceiveRestaurantEmailMarketing=customer_receive_restaurant_email_marketing,
-                ReceiveRestaurantSmsMarketing=customer_receive_restaurant_sms_marketing,
-                RestaurantEmailMarketingOptInText=customer_restaurant_email_marketing_opt_in_text,
-                RestaurantSmsMarketingOptInText=customer_restaurant_sms_marketing_opt_in_text,
-                db=db, token=MOCK_BEARER_TOKEN
+            # CORRECTED: Use run_async_in_sync to call the async create_booking_with_stripe
+            result = run_async_in_sync(
+                create_booking_with_stripe(
+                    restaurant_name=restaurant_name, VisitDate=date.fromisoformat(VisitDate), VisitTime=time.fromisoformat(VisitTime),
+                    PartySize=PartySize, ChannelCode=ChannelCode, SpecialRequests=SpecialRequests,
+                    IsLeaveTimeConfirmed=IsLeaveTimeConfirmed, RoomNumber=RoomNumber,
+                    Title=customer_title, FirstName=customer_first_name, Surname=customer_surname,
+                    MobileCountryCode=customer_mobile_country_code, Mobile=customer_mobile,
+                    PhoneCountryCode=customer_phone_country_code, Phone=customer_phone, Email=customer_email,
+                    ReceiveEmailMarketing=customer_receive_email_marketing, ReceiveSmsMarketing=customer_receive_sms_marketing,
+                    GroupEmailMarketingOptInText=customer_group_email_marketing_opt_in_text,
+                    GroupSmsMarketingOptInText=customer_group_sms_marketing_opt_in_text,
+                    ReceiveRestaurantEmailMarketing=customer_receive_restaurant_email_marketing,
+                    ReceiveRestaurantSmsMarketing=customer_receive_restaurant_sms_marketing,
+                    RestaurantEmailMarketingOptInText=customer_restaurant_email_marketing_opt_in_text,
+                    RestaurantSmsMarketingOptInText=customer_restaurant_sms_marketing_opt_in_text,
+                    db=db, token=MOCK_BEARER_TOKEN
+                )
             )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
@@ -316,7 +327,7 @@ class AIToolCallingInterface:
         finally: db.close()
 
     @tool
-    def cancel_booking(restaurant_name: str, booking_reference: str, micrositeName: str, cancellationReasonId: int) -> Dict[str, Any]:
+    def cancel_booking_tool(restaurant_name: str, booking_reference: str, micrositeName: str, cancellationReasonId: int) -> Dict[str, Any]:
         """
         Cancels an existing restaurant booking using its booking reference and a specified cancellation reason.
 
@@ -332,14 +343,17 @@ class AIToolCallingInterface:
         db = get_db_session()
         if not db: return {"error": "Database connection error."}
         try:
-            result = cancel_booking(restaurant_name, booking_reference, micrositeName, booking_reference, cancellationReasonId, db, MOCK_BEARER_TOKEN)
+            # CORRECTED: Use run_async_in_sync to call the async cancel_booking
+            result = run_async_in_sync(
+                cancel_booking(restaurant_name, booking_reference, micrositeName, booking_reference, cancellationReasonId, db, MOCK_BEARER_TOKEN)
+            )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
     @tool
-    def update_booking_details(
+    def update_booking_details_tool(
         restaurant_name: str, booking_reference: str,
         VisitDate: Optional[str] = None, VisitTime: Optional[str] = None, PartySize: Optional[int] = None,
         SpecialRequests: Optional[str] = None, IsLeaveTimeConfirmed: Optional[bool] = None
@@ -365,14 +379,17 @@ class AIToolCallingInterface:
         try:
             visit_date_obj = date.fromisoformat(VisitDate) if VisitDate else None
             visit_time_obj = time.fromisoformat(VisitTime) if VisitTime else None
-            result = update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, PartySize, SpecialRequests, IsLeaveTimeConfirmed, db, MOCK_BEARER_TOKEN)
+            # CORRECTED: Use run_async_in_sync to call the async update_booking
+            result = run_async_in_sync(
+                update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, PartySize, SpecialRequests, IsLeaveTimeConfirmed, db, MOCK_BEARER_TOKEN)
+            )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
 def test_data():
-    print(AIToolCallingInterface.find_customer_bookings("yingyan797@restaurantai.com"))
+    print(AIToolCallingInterface.find_customer_bookings_tool(email="yingyan797@restaurantai.com")) # Corrected the call to the tool function
 
 if __name__ == "__main__":
     # Example usage
