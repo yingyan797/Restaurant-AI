@@ -164,21 +164,21 @@ class AIToolCallingInterface:
                 start_date, end_date = date_range
                 # Ensure date format is correct for SQL and handle None within range
                 if start_date and end_date:
-                    statement += f" and VisitDate between {put_value(start_date)} and {put_value(end_date)}"
+                    statement += f" and visit_date between {put_value(start_date)} and {put_value(end_date)}"
                 elif start_date:
-                    statement += f" and VisitDate >= {put_value(start_date)}"
+                    statement += f" and visit_date >= {put_value(start_date)}"
                 elif end_date:
-                    statement += f" and VisitDate <= {put_value(end_date)}"
+                    statement += f" and visit_date <= {put_value(end_date)}"
 
             if time_range is not None and len(time_range) == 2:
                 start_time, end_time = time_range
                 # Ensure time format is correct for SQL and handle None within range
                 if start_time and end_time:
-                    statement += f" and VisitTime between {put_value(start_time)} and {put_value(end_time)}"
+                    statement += f" and visit_time between {put_value(start_time)} and {put_value(end_time)}"
                 elif start_time:
-                    statement += f" and VisitTime >= {put_value(start_time)}"
+                    statement += f" and visit_time >= {put_value(start_time)}"
                 elif end_time:
-                    statement += f" and VisitTime <= {put_value(end_time)}"
+                    statement += f" and visit_time <= {put_value(end_time)}"
 
             if restaurant_name is not None:
                 statement += f" and restaurants.name={put_value(restaurant_name)}"
@@ -186,20 +186,20 @@ class AIToolCallingInterface:
             if party_size_range is not None and len(party_size_range) == 2:
                 min_party_size, max_party_size = party_size_range
                 if min_party_size is not None and max_party_size is not None:
-                    statement += f" and PartySize between {put_value(min_party_size)} and {put_value(max_party_size)}"
+                    statement += f" and party_size between {put_value(min_party_size)} and {put_value(max_party_size)}"
                 elif min_party_size is not None:
-                    statement += f" and PartySize >= {put_value(min_party_size)}"
+                    statement += f" and party_size >= {put_value(min_party_size)}"
                 elif max_party_size is not None:
-                    statement += f" and PartySize <= {put_value(max_party_size)}"
+                    statement += f" and party_size <= {put_value(max_party_size)}"
 
             if status is not None:
                 statement += f" and status={put_value(status)}"
 
             if is_leave_time_confirmed is not None:
-                statement += f" and IsLeaveTimeConfirmed={put_value(is_leave_time_confirmed)}"
+                statement += f" and is_leave_time_confirmed={put_value(is_leave_time_confirmed)}"
 
             if room_number is not None:
-                statement += f" and RoomNumber={put_value(room_number)}"
+                statement += f" and room_number={put_value(room_number)}"
 
             # Execute the constructed query
             bookings_raw = db.execute(text(statement)).fetchall()
@@ -229,15 +229,15 @@ class AIToolCallingInterface:
             db.close()
 
     @tool
-    def search_availability_tool(restaurant_name: str, VisitDate: str, PartySize: int, ChannelCode: str = "ONLINE") -> Dict[str, Any]:
+    def search_availability_tool(restaurant_name: str, visit_date: str, party_size: int, channel_code: str = "ONLINE") -> Dict[str, Any]:
         """
         Searches for available booking slots at a specific restaurant on a given date for a certain party size.
 
         Args:
             restaurant_name (str): The name of the restaurant to check availability for.
-            VisitDate (str): The desired date for the visit in ISO format (YYYY-MM-DD).
-            PartySize (int): The number of people in the party.
-            ChannelCode (str, optional): The channel through which the booking is made (default is "ONLINE").
+            visit_date (str): The desired date for the visit in ISO format (YYYY-MM-DD).
+            party_size (int): The number of people in the party.
+            channel_code (str, optional): The channel through which the booking is made (default is "ONLINE").
 
         Returns:
             Dict[str, Any]: A dictionary containing a list of available slots if any, or an empty list if no availability is found.
@@ -247,7 +247,7 @@ class AIToolCallingInterface:
         try:
             # CORRECTED: Use run_async_in_sync to call the async availability_search
             result = run_async_in_sync(
-                availability_search(restaurant_name, date.fromisoformat(VisitDate), PartySize, ChannelCode, db, MOCK_BEARER_TOKEN)
+                availability_search(restaurant_name, date.fromisoformat(visit_date), party_size, channel_code, db, MOCK_BEARER_TOKEN)
             )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
@@ -256,10 +256,10 @@ class AIToolCallingInterface:
 
     @tool
     def create_booking_tool(
-        restaurant_name: str, VisitDate: str, VisitTime: str, PartySize: int,
+        restaurant_name: str, visit_date: str, visit_time: str, party_size: int,
         customer_email: str, customer_first_name: str, customer_surname: str, customer_mobile: str,
-        ChannelCode: str = "ONLINE", SpecialRequests: Optional[str] = None,
-        IsLeaveTimeConfirmed: Optional[bool] = False, RoomNumber: Optional[str] = None,
+        channel_code: str = "ONLINE", special_requests: Optional[str] = None,
+        is_leave_time_confirmed: Optional[bool] = False, room_number: Optional[str] = None,
         customer_title: Optional[str] = None, customer_mobile_country_code: Optional[str] = None,
         customer_phone_country_code: Optional[str] = None, customer_phone: Optional[str] = None,
         customer_receive_email_marketing: Optional[bool] = False, customer_receive_sms_marketing: Optional[bool] = False,
@@ -272,17 +272,17 @@ class AIToolCallingInterface:
 
         Args:
             restaurant_name (str): The name of the restaurant for the booking.
-            VisitDate (str): The date of the visit in ISO format (YYYY-MM-DD).
-            VisitTime (str): The time of the visit in ISO format (HH:MM:SS).
-            PartySize (int): The number of people for the reservation.
+            visit_date (str): The date of the visit in ISO format (YYYY-MM-DD).
+            visit_time (str): The time of the visit in ISO format (HH:MM:SS).
+            party_size (int): The number of people for the reservation.
             customer_email (str): The email address of the customer.
             customer_first_name (str): The first name of the customer.
             customer_surname (str): The surname of the customer.
             customer_mobile (str): The mobile phone number of the customer.
-            ChannelCode (str, optional): The channel through which the booking is made (default is "ONLINE").
-            SpecialRequests (str, optional): Any special requests for the booking (e.g., dietary restrictions, seating preferences).
-            IsLeaveTimeConfirmed (bool, optional): Indicates if the departure time is confirmed.
-            RoomNumber (str, optional): The room number if the customer is staying at a hotel associated with the restaurant.
+            channel_code (str, optional): The channel through which the booking is made (default is "ONLINE").
+            special_requests (str, optional): Any special requests for the booking (e.g., dietary restrictions, seating preferences).
+            is_leave_time_confirmed (bool, optional): Indicates if the departure time is confirmed.
+            room_number (str, optional): The room number if the customer is staying at a hotel associated with the restaurant.
             customer_title (str, optional): Title of the customer (e.g., Mr., Ms., Dr.).
             customer_mobile_country_code (str, optional): Mobile phone country code for the customer.
             customer_phone_country_code (str, optional): Landline phone country code for the customer.
@@ -305,9 +305,9 @@ class AIToolCallingInterface:
             # CORRECTED: Use run_async_in_sync to call the async create_booking_with_stripe
             result = run_async_in_sync(
                 create_booking_with_stripe(
-                    restaurant_name=restaurant_name, VisitDate=date.fromisoformat(VisitDate), VisitTime=time.fromisoformat(VisitTime),
-                    PartySize=PartySize, ChannelCode=ChannelCode, SpecialRequests=SpecialRequests,
-                    IsLeaveTimeConfirmed=IsLeaveTimeConfirmed, RoomNumber=RoomNumber,
+                    restaurant_name=restaurant_name, VisitDate=date.fromisoformat(visit_date), VisitTime=time.fromisoformat(visit_time),
+                    PartySize=party_size, ChannelCode=channel_code, SpecialRequests=special_requests,
+                    IsLeaveTimeConfirmed=is_leave_time_confirmed, RoomNumber=room_number,
                     Title=customer_title, FirstName=customer_first_name, Surname=customer_surname,
                     MobileCountryCode=customer_mobile_country_code, Mobile=customer_mobile,
                     PhoneCountryCode=customer_phone_country_code, Phone=customer_phone, Email=customer_email,
@@ -327,15 +327,15 @@ class AIToolCallingInterface:
         finally: db.close()
 
     @tool
-    def cancel_booking_tool(restaurant_name: str, booking_reference: str, micrositeName: str, cancellationReasonId: int) -> Dict[str, Any]:
+    def cancel_booking_tool(restaurant_name: str, booking_reference: str, microsite_name: str, cancellation_reason_id: int) -> Dict[str, Any]:
         """
         Cancels an existing restaurant booking using its booking reference and a specified cancellation reason.
 
         Args:
             restaurant_name (str): The name of the restaurant where the booking was made.
             booking_reference (str): The unique reference ID of the booking to be cancelled.
-            micrositeName (str): The microsite name associated with the restaurant (often the same as restaurant_name).
-            cancellationReasonId (int): The ID of the reason for cancellation, obtained from `list_cancellation_reasons`.
+            microsite_name (str): The microsite name associated with the restaurant (often the same as restaurant_name).
+            cancellation_reason_id (int): The ID of the reason for cancellation, obtained from `list_cancellation_reasons`.
 
         Returns:
             Dict[str, Any]: A dictionary indicating the status of the cancellation (e.g., {"status": "success"}).
@@ -345,7 +345,7 @@ class AIToolCallingInterface:
         try:
             # CORRECTED: Use run_async_in_sync to call the async cancel_booking
             result = run_async_in_sync(
-                cancel_booking(restaurant_name, booking_reference, micrositeName, booking_reference, cancellationReasonId, db, MOCK_BEARER_TOKEN)
+                cancel_booking(restaurant_name, booking_reference, microsite_name, booking_reference, cancellation_reason_id, db, MOCK_BEARER_TOKEN)
             )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
@@ -355,21 +355,21 @@ class AIToolCallingInterface:
     @tool
     def update_booking_details_tool(
         restaurant_name: str, booking_reference: str,
-        VisitDate: Optional[str] = None, VisitTime: Optional[str] = None, PartySize: Optional[int] = None,
-        SpecialRequests: Optional[str] = None, IsLeaveTimeConfirmed: Optional[bool] = None
+        visit_date: Optional[str] = None, visit_time: Optional[str] = None, party_size: Optional[int] = None,
+        special_requests: Optional[str] = None, is_leave_time_confirmed: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Updates specific details of an existing restaurant booking.
-        At least one of the optional parameters (VisitDate, VisitTime, PartySize, SpecialRequests, IsLeaveTimeConfirmed) must be provided.
+        At least one of the optional parameters (visit_date, visit_time, party_size, special_requests, is_leave_time_confirmed) must be provided.
 
         Args:
             restaurant_name (str): The name of the restaurant where the booking was made.
             booking_reference (str): The unique reference ID of the booking to be updated.
-            VisitDate (str, optional): The new date for the visit in ISO format (YYYY-MM-DD).
-            VisitTime (str, optional): The new time for the visit in ISO format (HH:MM:SS).
-            PartySize (int, optional): The new number of people for the reservation.
-            SpecialRequests (str, optional): Updated special requests for the booking.
-            IsLeaveTimeConfirmed (bool, optional): Updated status for whether the leave time is confirmed.
+            visit_date (str, optional): The new date for the visit in ISO format (YYYY-MM-DD).
+            visit_time (str, optional): The new time for the visit in ISO format (HH:MM:SS).
+            party_size (int, optional): The new number of people for the reservation.
+            special_requests (str, optional): Updated special requests for the booking.
+            is_leave_time_confirmed (bool, optional): Updated status for whether the leave time is confirmed.
 
         Returns:
             Dict[str, Any]: A dictionary indicating the status of the update (e.g., {"status": "success"}).
@@ -377,11 +377,11 @@ class AIToolCallingInterface:
         db = get_db_session()
         if not db: return {"error": "Database connection error."}
         try:
-            visit_date_obj = date.fromisoformat(VisitDate) if VisitDate else None
-            visit_time_obj = time.fromisoformat(VisitTime) if VisitTime else None
+            visit_date_obj = date.fromisoformat(visit_date) if visit_date else None
+            visit_time_obj = time.fromisoformat(visit_time) if visit_time else None
             # CORRECTED: Use run_async_in_sync to call the async update_booking
             result = run_async_in_sync(
-                update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, PartySize, SpecialRequests, IsLeaveTimeConfirmed, db, MOCK_BEARER_TOKEN)
+                update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, party_size, special_requests, is_leave_time_confirmed, db, MOCK_BEARER_TOKEN)
             )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}

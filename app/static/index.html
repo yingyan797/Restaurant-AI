@@ -74,6 +74,7 @@
                 <button onclick="writeMessage('Yes')">Yes</button>
                 <button onclick="writeMessage('No')">No</button>
                 <button onclick="writeMessage('0')" style="height: 30px;">0</button>
+                <button onclick="writeMessage('1')" style="height: 30px;">1</button>
                 <button onclick="writeMessage('2')" style="height: 30px;">2</button>
                 <button onclick="writeMessage('3')" style="height: 30px;">3</button>
                 <button onclick="writeMessage('4')" style="height: 30px;">4</button>
@@ -539,15 +540,34 @@
             sendMessage();
         }
 
-        // Chat functionality
         function addMessage(message, isUser = false) {
+            const chatInput = document.getElementById("chatInput");
+            chatInput.style.backgroundColor = "white";
+            chatInput.style.color = "black";
             const chatMessages = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
             messageDiv.innerHTML = message;
+
+            const writeback = document.createElement("b");
+            writeback.style.marginLeft = "25px";
+            writeback.style.cursor = "pointer";
+            writeback.style.color = "skyblue";
+            writeback.style.fontSize = "small";
+            writeback.style.borderBottom = "dashed";
+            writeback.textContent = "Copy";
+            writeback.onclick = () => {
+                chatInput.value = message;
+                chatInput.style.backgroundColor = "green";
+                chatInput.style.color = "white";
+            };
+
+            messageDiv.appendChild(writeback); // actually add the button to the div
+
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
+
 
         function handleKeyPress(event) {
             if (event.key === 'Enter') {

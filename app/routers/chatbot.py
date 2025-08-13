@@ -92,7 +92,7 @@ async def reset_conversation(reset_request: ResetRequest = None):
         
         # Clear the state for the given thread_id in the checkpointer
         # This effectively clears the state associated with the given thread_id.
-        memory_saver.get_tuple(config={"configurable": {"thread_id": session_id}}, mode="clear")
+        memory_saver.delete_thread(session_id)
 
         return {"message": "Conversation reset successfully. You can start a new conversation."}
     except Exception as e:
