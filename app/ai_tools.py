@@ -69,7 +69,6 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def list_restaurants_tool():
         """
         Lists all available restaurants registered in the system.
@@ -86,7 +85,6 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def list_cancellation_reasons_tool():
         """
         Retrieves all predefined cancellation reasons with their ID, title, and description.
@@ -109,7 +107,6 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def find_customer_bookings_tool(
             email: str,
             date_range: Optional[List[str]] = None,
@@ -228,7 +225,6 @@ class AIToolCallingInterface:
         finally:
             db.close()
 
-    @tool
     def search_availability_tool(restaurant_name: str, visit_date: str, party_size: int, channel_code: str = "ONLINE") -> Dict[str, Any]:
         """
         Searches for available booking slots at a specific restaurant on a given date for a certain party size.
@@ -254,7 +250,6 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def create_booking_tool(
         restaurant_name: str, visit_date: str, visit_time: str, party_size: int,
         customer_email: str, customer_first_name: str, customer_surname: str, customer_mobile: str,
@@ -326,7 +321,6 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def cancel_booking_tool(restaurant_name: str, booking_reference: str, microsite_name: str, cancellation_reason_id: int) -> Dict[str, Any]:
         """
         Cancels an existing restaurant booking using its booking reference and a specified cancellation reason.
@@ -352,11 +346,10 @@ class AIToolCallingInterface:
         except Exception as e: return {"error": str(e)}
         finally: db.close()
 
-    @tool
     def update_booking_details_tool(
         restaurant_name: str, booking_reference: str,
-        visit_date: Optional[str] = None, visit_time: Optional[str] = None, party_size: Optional[int] = None,
-        special_requests: Optional[str] = None, is_leave_time_confirmed: Optional[bool] = None
+        new_visit_date: Optional[str] = None, new_visit_time: Optional[str] = None, new_party_size: Optional[int] = None,
+        new_special_requests: Optional[str] = None, new_is_leave_time_confirmed: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Updates specific details of an existing restaurant booking.
@@ -377,11 +370,11 @@ class AIToolCallingInterface:
         db = get_db_session()
         if not db: return {"error": "Database connection error."}
         try:
-            visit_date_obj = date.fromisoformat(visit_date) if visit_date else None
-            visit_time_obj = time.fromisoformat(visit_time) if visit_time else None
+            visit_date_obj = date.fromisoformat(new_visit_date) if new_visit_date else None
+            visit_time_obj = time.fromisoformat(new_visit_time) if new_visit_time else None
             # CORRECTED: Use run_async_in_sync to call the async update_booking
             result = run_async_in_sync(
-                update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, party_size, special_requests, is_leave_time_confirmed, db, MOCK_BEARER_TOKEN)
+                update_booking(restaurant_name, booking_reference, visit_date_obj, visit_time_obj, new_party_size, new_special_requests, new_is_leave_time_confirmed, db, MOCK_BEARER_TOKEN)
             )
             return result
         except HTTPException as e: return {"error": e.detail, "status_code": e.status_code}
@@ -389,7 +382,9 @@ class AIToolCallingInterface:
         finally: db.close()
 
 def test_data():
-    print(AIToolCallingInterface.find_customer_bookings_tool(email="yingyan797@restaurantai.com")) # Corrected the call to the tool function
+    db = get_db_session()
+    db.execute(text("update bookings set status = 'confirmed'"))
+    db.commit()
 
 if __name__ == "__main__":
     # Example usage
