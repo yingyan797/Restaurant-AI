@@ -34,11 +34,11 @@ class AIModel:
     intent_phrases = {
         "list_restaurants_tool": ["list restaurants", "show me restaurants", "what restaurants do you have", "what are your restaurants"],
         "list_cancellation_reasons_tool": ["cancellation reasons", "why can I cancel", "list reasons to cancel", "cancellation policies"],
-        "find_customer_bookings_tool": ["find my bookings", "show my reservations", "what bookings do I have for a restaurant", "check my bookings on a date", "find my bookings for several people"],
+        "find_customer_bookings_tool": ["find my bookings", "show my reservations for a restaurant", "what bookings do I have", "check my bookings on a date", "find my bookings for several people"],
         "search_availability_tool": ["check restaurant availability", "is there a table available", "find an available time for the restaurant", "are there any tables available for the restaurant"],
         "create_booking_tool": ["make a booking", "create a reservation for the restaurant", "book a table on a date", "I want to reserve"],
         "cancel_booking_tool": ["cancel my booking", "cancel a reservation for the restaurant", "I want to cancel"],
-        "update_booking_details_tool": ["change my booking", "update reservation to a new date", "modify a booking", "I need to change my reservation"],
+        "update_booking_details_tool": ["change my booking", "update reservation to a new date", "modify my booking to restaurant", "I need to change my reservation detail"],
         "chitchat": ["hello", "hi", "how are you", "what can you do", "who are you", "tell me about yourself", "thanks", "thank you", "bye", "goodbye"]
     }
 
